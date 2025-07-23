@@ -49,7 +49,7 @@ LINK_OUTPUT := $(BUILD_DIR)/$(KERNEL_NAME).link.xclbin
 XCLBIN_FILE := $(BUILD_DIR)/$(KERNEL_NAME).xclbin
 
 # Kernel HLS & Link Configuration File
-KERNEL_CFG := ./subiso_link.cfg
+KERNEL_CFG := ./subiso.cfg
 
 ############################## Source Files ##############################
 
@@ -63,10 +63,10 @@ VPP := v++
 
 # Kernel Compiler Flags (V++) for C++ to XO compilation
 VPP_FLAGS := --save-temps -t $(TARGET) --platform $(PLATFORM) --temp_dir $(TEMP_DIR)
-VPP_FLAGS += --config subiso_hls.cfg
+VPP_FLAGS += --config $(KERNEL_CFG)
 
 # Set HLS synthesis target frequency
-VPP_FLAGS += --hls.clock 333000000:$(KERNEL_NAME)
+VPP_FLAGS += --hls.clock 300000000:$(KERNEL_NAME)
 
 # Kernel Linker Flags (V++)
 VPP_LDFLAGS += -g
