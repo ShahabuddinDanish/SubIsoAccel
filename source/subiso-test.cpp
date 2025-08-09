@@ -21,9 +21,22 @@
 #include "experimental/xrt_xclbin.h"
 
 // AXI-Lite Register Offsets
+const int ADDR_HITS_FINDMIN_LOW = 0xb0;
+const int ADDR_HITS_READMIN_C_LOW = 0xc8;
+const int ADDR_HITS_READMIN_E_LOW = 0xe0;
+const int ADDR_HITS_INTERSECT_LOW = 0xf8;
+const int ADDR_HITS_VERIFY_LOW = 0x110;
+const int ADDR_REQS_FINDMIN_LOW = 0x128;
+const int ADDR_REQS_READMIN_C_LOW = 0x140;
+const int ADDR_REQS_READMIN_E_LOW = 0x158;
+const int ADDR_REQS_INTERSECT_LOW = 0x170;
+const int ADDR_REQS_VERIFY_LOW = 0x188;
+const int ADDR_REQS_DYNFO_LOW = 0x1a0;
+const int ADDR_BLOOM_FILTERED_LOW = 0x1b8;
+
+const int ADDR_DYNFO_OVERFLOW_DATA = 0x90;
 const int ADDR_RESULT_LOW = 0x1d0;
 const int ADDR_RESULT_HIGH = 0x1d4;
-//const int ADDR_DYNFO_OVERFLOW_DATA = 0x1d8;
 
 struct TestEntry {
     std::string querygraph;
@@ -335,7 +348,7 @@ int main(int argc, char** argv)
     //hls::stream<T_NODE> result("results");
 #endif
 
-    const unsigned int MAX_QDATA = 300;
+    const unsigned int MAX_QDATA = MAX_QUERYDATA;
     const unsigned int BURST_SIZE = 32;
 
     unsigned int nfile = 0;
@@ -441,6 +454,23 @@ int main(int argc, char** argv)
 
     char datagraph_file[100], querygraph_file[100];
 
+    std::cout << "INFO: Configuring the kernel run object." << std::endl;
+    auto run = xrt::run(krnl);
+
+    std::cout << "Creating XRT buffer objects..." << std::endl;
+
+    // Buffer object flags
+    auto bo_flags = xrt::bo::flags::normal;
+
+    // Create buffer objects from host-side pointers
+    auto htb_buf_bo_b0 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(0));    // Argument 0 -> htb_buf -> Bank 0
+    auto htb_buf_bo_b1 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));    // Argument 1 -> htb_buf -> Bank 1
+    auto htb_buf_bo_b2 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));    // Argument 2 -> htb_buf -> Bank 2
+    auto htb_buf_bo_b3 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(3));    // Argument 3 -> htb_buf -> Bank 3
+
+    auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(0));
+    auto res_buf_bo = xrt::bo(device, res_buf, RESULTS_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));
+
     for (const auto& entry : test) {
         const std::string& datagraph = entry.first;
         const std::vector<TestEntry>& entries = entry.second;
@@ -458,10 +488,12 @@ int main(int argc, char** argv)
             std::string(datagraph),
             dynfifo_space,
             nDE);
+        
+        // need to sync the datagraph buffer once per datagraph
+        res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
         for (const TestEntry &testEntry : entries)
         {
-
             // load query
             auto res = load_querygraphs<
                 VERTEX_WIDTH_BIT,
@@ -479,13 +511,16 @@ int main(int argc, char** argv)
                 std::cout << "Error loading query graph." << std::endl;
                 return -1;
             }
+    
+            // query data is written into res_buf, so it needs to be synced again
+            res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
             std::cout << "  Querygraph: " << testEntry.querygraph << ", Golden: " << testEntry.golden
                       << ", H1: " << testEntry.h1 << ", H2: " << testEntry.h2 << std::endl;
             std::cout << "Words for dynamic fifo: " << dynfifo_space << std::endl;
             unsigned char h1 = stoi(testEntry.h1);
             unsigned char h2 = stoi(testEntry.h2);
-            res_expected = stol(testEntry.golden);
+            res_expected = stoull(testEntry.golden);
 
             auto blocks = tablelist_length * 2^(h1 + h2 - 14);
             if (blocks > 4096){
@@ -518,20 +553,6 @@ int main(int argc, char** argv)
             memset(htb_buf, 0, HASHTABLES_SPACE * sizeof(row_t));
             memset(bloom_p, 0, BLOOM_SPACE * sizeof(bloom_t));
 
-            std::cout << "Creating XRT buffer objects..." << std::endl;
-
-            // Buffer object flags
-            auto bo_flags = xrt::bo::flags::normal;
-
-            // Create buffer objects from host-side pointers
-            auto htb_buf_bo_b0 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(0));    // Argument 0 -> htb_buf -> Bank 0
-            auto htb_buf_bo_b1 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));    // Argument 1 -> htb_buf -> Bank 1
-            auto htb_buf_bo_b2 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));    // Argument 2 -> htb_buf -> Bank 2
-            auto htb_buf_bo_b3 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(3));    // Argument 3 -> htb_buf -> Bank 3
-
-            auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(0));
-            auto res_buf_bo = xrt::bo(device, res_buf, RESULTS_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));
-
             // Sync the buffers that contain input data to the device
             std::cout << "Synchronize input buffer data to device global memory." << std::endl;
             // htb_buf and bloom_p are output-only from the CPU's perspective (written to by the kernel)
@@ -540,44 +561,46 @@ int main(int argc, char** argv)
             htb_buf_bo_b1.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             htb_buf_bo_b2.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             htb_buf_bo_b3.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-            res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             bloom_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
             std::cout << "Setting kernel arguments and launching." << std::endl;
 
-            auto kernel_start = std::chrono::high_resolution_clock::now();
-            auto run = krnl(
-                            htb_buf_bo_b0,
-                            htb_buf_bo_b1,
-                            htb_buf_bo_b2,
-                            htb_buf_bo_b3,
-                            bloom_bo,
-                            res_buf_bo,
-                            nQV,
-                            nQE,
-                            nDE,
-                            h1,
-                            h2,
-                            dynfifo_space,
-                            dynfifo_overflow
+            run.set_arg(0, htb_buf_bo_b0);
+            run.set_arg(1, htb_buf_bo_b1);
+            run.set_arg(2, htb_buf_bo_b2);
+            run.set_arg(3, htb_buf_bo_b3);
+            run.set_arg(4, bloom_bo);
+            run.set_arg(5, res_buf_bo);
+            run.set_arg(6, nQV);
+            run.set_arg(7, nQE);
+            run.set_arg(8, nDE);
+            run.set_arg(9, h1);
+            run.set_arg(10, h2);
+            run.set_arg(11, dynfifo_space);
+            run.set_arg(12, dynfifo_overflow);
 #if DEBUG_INTERFACE
-                            debug_endpreprocess_s,
-                            counters[0],
-                            counters[1],
-                            counters[2],
-                            counters[3],
-                            counters[4],
-                            counters[5],
-                            counters[6],
-                            counters[7],
-                            counters[8],
-                            counters[9],
-                            counters[10],
-                            counters[11]
+            run.set_arg(13, debug_endpreprocess_s);
+            run.set_arg(14, counters[0]);
+            run.set_arg(15, counters[1]);
+            run.set_arg(16, counters[2]);
+            run.set_arg(17, counters[3]);
+            run.set_arg(18, counters[4]);
+            run.set_arg(19, counters[5]);
+            run.set_arg(20, counters[6]);
+            run.set_arg(21, counters[7]);
+            run.set_arg(22, counters[8]);
+            run.set_arg(23, counters[9]);
+            run.set_arg(24, counters[10]);
+            run.set_arg(25, counters[11]);
 #endif
-                        );
+
+            std::cout << "Starting kernel execution." << std::endl;
+            auto kernel_start = std::chrono::high_resolution_clock::now();
+
+            run.start();
             std::cout << "Waiting for kernel to complete." << std::endl;
             run.wait();
+
             auto kernel_end = std::chrono::high_resolution_clock::now();
             std::chrono::duration<double> kernel_time = kernel_end - kernel_start;
 
@@ -588,7 +611,7 @@ int main(int argc, char** argv)
 
             // Read 32-bit dynfifo_overflow value
             //dynfifo_overflow = krnl.read_register(ADDR_DYNFO_OVERFLOW_DATA);
-/*
+
 #if DEBUG_INTERFACE
             // Read all 64-bit debug counters
             const int counter_addrs[] = {
@@ -603,10 +626,9 @@ int main(int argc, char** argv)
                 counters[i] = (static_cast<uint64_t>(high) << 32) | low;
             }
 #endif
-*/
-            std::cout << "Expected Matches: " << res_expected << " Actual Matches: " << total_matches << std::endl;
-            std::cout << "Execution Time: " << kernel_time.count() << std::endl;
 
+            std::cout << "Expected Matches: " << res_expected << " Actual Matches: " << total_matches << std::endl;
+            std::cout << "Execution Time: " << kernel_time.count() << " s" << std::endl;
             /*
             std::cout << "Dynamic FIFO Overflow: " << (dynfifo_overflow ? "YES" : "NO") << std::endl;
 
