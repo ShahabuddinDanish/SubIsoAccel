@@ -9,6 +9,8 @@
 #include <iomanip>
 #include <unistd.h>
 #include <fstream>
+#include <utility>
+#include <cmath>
 
 #if SOFTWARE_PREPROC
     #include "preprocess.hpp"
@@ -158,7 +160,7 @@ void load_datagraphs(
 template <size_t NODE_W,
          size_t LAB_W,
          size_t MAX_QDATA>
-int load_querygraphs(
+std::pair<int, int> load_querygraphs(
         row_t *edge_buf,
         std::string queryfile,
         const unsigned long dynfifo_space,
@@ -188,7 +190,7 @@ int load_querygraphs(
     std::cout << "Querygraph: " << queryfile << std::endl; 
     if (!fQuery.is_open()){
         std::cout << "Query file opening failed.\n";
-        return -1;
+        return {-1, 0};
     }
 
     /* Read vertices and edges cardinality */
@@ -282,7 +284,7 @@ int load_querygraphs(
 
         if (max_neigh == 0) {
             std::cout << "Error: query graph is not connected." << std::endl;
-            return -1;
+            return {-1, 0};
         }
 
         query_vertices.erase(remove(query_vertices.begin(), query_vertices.end(), following), query_vertices.end());
@@ -312,7 +314,7 @@ int load_querygraphs(
     }
 
     tableListLength = tablelist.size();
-    return 0;
+    return {0, max_degree};
 
 }
 
@@ -507,20 +509,25 @@ int main(int argc, char** argv)
                 tablelist_length,
                 nDE);
             
-            if (res < 0) {
+            if (res.first < 0) {
                 std::cout << "Error loading query graph." << std::endl;
                 return -1;
             }
+
+            // Get the max_degree from the pair
+            int max_degree = res.second;
     
             // query data is written into res_buf, so it needs to be synced again
             res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
-            std::cout << "  Querygraph: " << testEntry.querygraph << ", Golden: " << testEntry.golden
-                      << ", H1: " << testEntry.h1 << ", H2: " << testEntry.h2 << std::endl;
-            std::cout << "Words for dynamic fifo: " << dynfifo_space << std::endl;
-            unsigned char h1 = stoi(testEntry.h1);
-            unsigned char h2 = stoi(testEntry.h2);
+            std::cout << "INFO: Querygraph: " << testEntry.querygraph << ", Golden: " << testEntry.golden << std:endl;
+            std::cout << "INFO: Words for dynamic fifo: " << dynfifo_space << std::endl;
             res_expected = stoull(testEntry.golden);
+
+            // Dynamic parameter heuristic for hash table
+            unsigned char h1 = static_cast<unsigned char>(0.4 * log(5e7 * nDE)) + 2;
+            unsigned char h2 = static_cast<unsigned char>(std::min(max_degree + 1, 7));
+            std::cout << "INFO: Dynamically calculated H1=" << (int)h1 << ", H2=" << (int)h2 << std::endl;
 
             auto blocks = tablelist_length * 2^(h1 + h2 - 14);
             if (blocks > 4096){
