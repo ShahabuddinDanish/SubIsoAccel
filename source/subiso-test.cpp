@@ -520,7 +520,7 @@ int main(int argc, char** argv)
             // query data is written into res_buf, so it needs to be synced again
             res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
-            std::cout << "INFO: Querygraph: " << testEntry.querygraph << ", Golden: " << testEntry.golden << std:endl;
+            std::cout << "INFO: Querygraph: " << testEntry.querygraph << ", Golden: " << testEntry.golden << std::endl;
             std::cout << "INFO: Words for dynamic fifo: " << dynfifo_space << std::endl;
             res_expected = stoull(testEntry.golden);
 
@@ -529,20 +529,20 @@ int main(int argc, char** argv)
             unsigned char h2 = static_cast<unsigned char>(std::min(max_degree + 1, 7));
             std::cout << "INFO: Dynamically calculated H1=" << (int)h1 << ", H2=" << (int)h2 << std::endl;
 
-            auto blocks = tablelist_length * 2^(h1 + h2 - 14);
+            auto blocks = tablelist_length * pow(2, (h1 + h2 - 14));
             if (blocks > 4096){
                 std::cout << "Error: Blocks overflow." << std::endl;
                 return -1;
             }
 
-            auto hashtable_size = tablelist_length * 2^(h1 + h2) * 4;
+            auto hashtable_size = tablelist_length * pow(2, (h1 + h2)) * 4;
             hashtable_size += nDE * 16;
             if (hashtable_size > HASHTABLES_SPACE * sizeof(row_t)){
                 std::cout << "Error: Hashtable overflow." << std::endl;
                 return -1;
             }
 
-            auto bloom_size = tablelist_length * 2^(h1) * 64;
+            auto bloom_size = tablelist_length * pow(2, h1) * 64;
             if (bloom_size > BLOOM_SPACE * sizeof(row_t)){
                 std::cout << "Error: Bloom overflow." << std::endl;
                 return -1;
@@ -553,9 +553,6 @@ int main(int argc, char** argv)
                 BLOOM_SPACE * sizeof(bloom_t)) << " bytes." << std::endl;
             std::cout << "Hashtables use " << (hashtable_size / (HASHTABLES_SPACE * sizeof(row_t))) * 100 << "% of space." << std::endl; 
             std::cout << "Bloom use " << (bloom_size / (BLOOM_SPACE * sizeof(bloom_t))) * 100 << "% of space." << std::endl;
-
-            //for (int g = 0; g < HASHTABLES_SPACE; htb_buf[g++] = 0);
-            //for (int g = 0; g < BLOOM_SPACE; bloom_p[g++] = 0);
 
             memset(htb_buf, 0, HASHTABLES_SPACE * sizeof(row_t));
             memset(bloom_p, 0, BLOOM_SPACE * sizeof(bloom_t));
