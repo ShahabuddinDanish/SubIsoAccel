@@ -452,6 +452,7 @@ int main(int argc, char** argv)
                                     "reqs_verify",
                                     "reqs_dynfifo",
                                     "bloom_filtered"};
+    unsigned int dynfifo_overflow;
     unsigned int debug_endpreprocess_s;
     bool flag = true;
 
@@ -686,7 +687,7 @@ int main(int argc, char** argv)
             uint64_t total_matches = (static_cast<uint64_t>(res_h) << 32) | res_l;
 
             // Read 32-bit dynfifo_overflow value
-            uint32_t dynfifo_overflow = krnl.read_register(ADDR_DYNFO_OVERFLOW_DATA);
+            dynfifo_overflow = krnl.read_register(ADDR_DYNFO_OVERFLOW_DATA);
             std::cout << "INFO: Kernel reported dynamic FIFO overflow: " 
             << (dynfifo_overflow ? "YES" : "NO") << std::endl;
 
