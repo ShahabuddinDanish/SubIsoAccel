@@ -421,8 +421,8 @@ int main(int argc, char** argv)
     unsigned short nQE = 0;
     unsigned short tablelist_length = 0;
     unsigned long nDE = 0;
-    uint64_t res_actual;
-    uint64_t res_expected;
+    uint64_t res_actual = 0;
+    uint64_t res_expected = 0;
     unsigned long diagnostic;
     unsigned long dynfifo_space;
 
@@ -444,7 +444,7 @@ int main(int argc, char** argv)
     unsigned int debug_endpreprocess_s;
     bool flag = true;
 
-    row_t *res_buf;
+    //row_t *res_buf;
     row_t *htb_buf;
     bloom_t *bloom_p;
 
@@ -452,7 +452,7 @@ int main(int argc, char** argv)
     if (getcwd(cwd, sizeof(cwd)) != NULL)
         std::cout << "Current working dir: " << cwd << std::endl;
 
-    posix_memalign((void **)&res_buf, 4096, RESULTS_SPACE * sizeof(row_t));
+    //posix_memalign((void **)&res_buf, 4096, RESULTS_SPACE * sizeof(row_t));
     posix_memalign((void **)&htb_buf, 4096, HASHTABLES_SPACE * sizeof(row_t));
     posix_memalign((void **)&bloom_p, 4096, BLOOM_SPACE * sizeof(bloom_t));
 
@@ -471,11 +471,11 @@ int main(int argc, char** argv)
     }
     
     // res_buf = (row_t*)malloc(RESULTS_SPACE * sizeof(row_t));
-    if (!res_buf){
+    /*if (!res_buf){
 		std::cout << "Allocation failed." << std::endl;
 		return -1;
 	}
-
+    */
     std::ifstream testfile("scripts/run_list_fpga.txt");
     if (!testfile) {
         std::cerr << "Error: Unable to open run_list_fpga.txt" << std::endl;
@@ -513,14 +513,16 @@ int main(int argc, char** argv)
     // Buffer object flags
     auto bo_flags = xrt::bo::flags::normal;
 
+    // Create device buffer
+    auto res_buf_bo = xrt::bo(device, RESULTS_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));
+    auto res_buf = res_buf_bo.map<row_t*>(); // Map to host-accessible pointer
+
     // Create buffer objects from host-side pointers
     auto htb_buf_bo_b0 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(0));    // Argument 0 -> htb_buf -> Bank 0
     auto htb_buf_bo_b1 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));    // Argument 1 -> htb_buf -> Bank 1
     auto htb_buf_bo_b2 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));    // Argument 2 -> htb_buf -> Bank 2
     auto htb_buf_bo_b3 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(3));    // Argument 3 -> htb_buf -> Bank 3
-
     auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(0));
-    auto res_buf_bo = xrt::bo(device, res_buf, RESULTS_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));
 
     for (const auto& entry : test) {
         const std::string& datagraph = entry.first;
@@ -539,9 +541,11 @@ int main(int argc, char** argv)
             std::string(datagraph),
             dynfifo_space,
             nDE);
-        
-        // need to sync the datagraph buffer once per datagraph
-        res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+
+	    std::cout << "INFO: Datagraph Edges (nDE) loaded: " << nDE << std::endl; 
+
+	    // need to sync the datagraph buffer once per datagraph
+        // res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
         for (const TestEntry &testEntry : entries)
         {
@@ -567,7 +571,7 @@ int main(int argc, char** argv)
             int max_degree = res.second;
     
             // query data is written into res_buf, so it needs to be synced again
-            res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+            // res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
             std::cout << "INFO: Querygraph: " << testEntry.querygraph << ", Golden: " << testEntry.golden << std::endl;
             std::cout << "INFO: Words for dynamic fifo: " << dynfifo_space << std::endl;
@@ -615,6 +619,7 @@ int main(int argc, char** argv)
             htb_buf_bo_b2.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             htb_buf_bo_b3.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             bloom_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+	        res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
             std::cout << "Setting kernel arguments and launching." << std::endl;
 
@@ -646,6 +651,7 @@ int main(int argc, char** argv)
             run.set_arg(24, counters[10]);
             run.set_arg(25, counters[11]);
 #endif
+	    run.set_arg(26, res_actual);
 
             std::cout << "Starting kernel execution." << std::endl;
             auto kernel_start = std::chrono::high_resolution_clock::now();
@@ -695,7 +701,7 @@ int main(int argc, char** argv)
     }
     free(htb_buf);
     free(bloom_p);
-    free(res_buf);
+    //free(res_buf);
     return 0;
     //return !flag;
 }
