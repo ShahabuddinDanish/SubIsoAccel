@@ -65,6 +65,9 @@ VPP := v++
 VPP_FLAGS := --save-temps -t $(TARGET) --platform $(PLATFORM) --temp_dir $(TEMP_DIR)
 VPP_FLAGS += --config $(KERNEL_CFG)
 
+# Kernel debug flag
+VPP_FLAGS += -DDEBUG_INTERFACE=1
+
 # Set HLS synthesis target frequency
 VPP_FLAGS += --hls.clock 300000000:$(KERNEL_NAME)
 
