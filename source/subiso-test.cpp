@@ -86,6 +86,18 @@ struct edge_t {
     uint32_t labeldst;
 };
 
+void dump_buffer_to_file(const std::string& filename, row_t* buffer, size_t num_items) {
+    std::ofstream outfile(filename, std::ios::out | std::ios::binary);
+    if (!outfile) {
+        std::cerr << "Error: Could not open " << filename << " for writing." << std::endl;
+        return;
+    }
+    // Each 'row_t' is 16 bytes.
+    outfile.write(reinterpret_cast<const char*>(buffer), num_items * sizeof(row_t));
+    outfile.close();
+    std::cout << "INFO: Dumped " << num_items << " items to " << filename << std::endl;
+}
+
 template <size_t NODE_W,
          size_t LAB_W,
          size_t BURST_SIZE,
@@ -440,7 +452,6 @@ int main(int argc, char** argv)
                                     "reqs_verify",
                                     "reqs_dynfifo",
                                     "bloom_filtered"};
-    unsigned int dynfifo_overflow = 0;
     unsigned int debug_endpreprocess_s;
     bool flag = true;
 
@@ -621,6 +632,12 @@ int main(int argc, char** argv)
             bloom_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 	        res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
+            // DEBUGGING
+            // calculate the total number of items in the buffer
+            size_t total_items_to_dump = nDE + nQV + nQE;
+            // data starts at the 'dynfifo_space' offset
+            dump_buffer_to_file("xrt_host_fifo.bin", res_buf + dynfifo_space, total_items_to_dump);
+
             std::cout << "Setting kernel arguments and launching." << std::endl;
 
             run.set_arg(0, htb_buf_bo_b0);
@@ -669,7 +686,9 @@ int main(int argc, char** argv)
             uint64_t total_matches = (static_cast<uint64_t>(res_h) << 32) | res_l;
 
             // Read 32-bit dynfifo_overflow value
-            //dynfifo_overflow = krnl.read_register(ADDR_DYNFO_OVERFLOW_DATA);
+            uint32_t dynfifo_overflow = krnl.read_register(ADDR_DYNFO_OVERFLOW_DATA);
+            std::cout << "INFO: Kernel reported dynamic FIFO overflow: " 
+            << (dynfifo_overflow ? "YES" : "NO") << std::endl;
 
 #if DEBUG_INTERFACE
             // Read all 64-bit debug counters
