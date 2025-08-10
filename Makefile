@@ -84,6 +84,8 @@ CXXFLAGS := -I./source \
             -Wall -O3 -g -std=c++17 \
             -fmessage-length=0 -DXILINX_XRT
 
+CXXFLAGS += -DDEBUG_INTERFACE=1
+
 # LDFLAGS
 LDFLAGS := -L$(XILINX_XRT)/lib -lOpenCL -lpthread -lrt -lstdc++ -luuid -lxrt_coreutil
 
