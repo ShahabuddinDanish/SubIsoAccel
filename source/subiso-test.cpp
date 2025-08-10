@@ -173,7 +173,7 @@ std::pair<int, int> load_querygraphs(
     unsigned long edge_buf_p = numDataEdges + dynfifo_space;
     std::string fLine{};
     std::unordered_map<unsigned long, unsigned long> vToLabelQuery;
-    std::vector<std::vector<unsigned long>> adjacency_list(numQueryVertices);
+    std::vector<std::vector<unsigned long>> adjacency_list;
     std::vector<std::tuple<int, int, int, int>> edge_list; // Stores edges in format (src, dst, labelsrc, labeldst)
     std::vector<std::tuple<int, int, bool>> tablelist; // To store unique edges for memory overflow check
     edge_t edge;
@@ -198,6 +198,7 @@ std::pair<int, int> load_querygraphs(
     sscanf(fLine.c_str(), "%*c %hu %hu", &numQueryVertices, &numQueryEdges);
     std::cout << "Query vertices: " << numQueryVertices << ", Query edges: " << numQueryEdges << std::endl;
 
+    adjacency_list.resize(numQueryVertices);    // resize adjacency list after reading correct size
     assert(MAX_QDATA >= numQueryEdges + numQueryVertices);
     
     /* Store query labels */
@@ -293,15 +294,21 @@ std::pair<int, int> load_querygraphs(
 
     /* Stream matching order */
     std::cout << "Query vertex order: [";
-    for(int count = 0; count < numQueryVertices; count++){ 
+    for(int count = 0; count < numQueryVertices; count++){
+        // Initialize all fields for a vertex instruction (zero out the struct) before writing vertex order to buffer 
         edge.src = order[count];
+        edge.dst = 0;
+        edge.labelsrc = 0;
+        edge.labeldst = 0;
+
         std::cout << order[count] << " ";
-        //edge_buf[edge_buf_p++] = *((row_t*)&edge); /*dereferencing type-punned pointer will break strict-aliasing rules warning*/
+
         memcpy(&edge_buf[edge_buf_p++], &edge, sizeof(row_t));
     }
     std::cout << "]" << std::endl;
     
     /* Stream edges */
+    // Fill all fields from edge_list
     for(int count = 0; count < numQueryEdges; count++){    
         unsigned long nodesrc_t, nodedst_t;
         auto tuple_edge = edge_list[count];
@@ -309,7 +316,6 @@ std::pair<int, int> load_querygraphs(
         edge.dst = std::get<1>(tuple_edge);
         edge.labelsrc = std::get<2>(tuple_edge);
         edge.labeldst = std::get<3>(tuple_edge);
-        //edge_buf[edge_buf_p++] = *((row_t*)&edge); /*dereferencing type-punned pointer will break strict-aliasing rules warning*/
         memcpy(&edge_buf[edge_buf_p++], &edge, sizeof(row_t));
     }
 
