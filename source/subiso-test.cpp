@@ -319,6 +319,49 @@ std::pair<int, int> load_querygraphs(
         memcpy(&edge_buf[edge_buf_p++], &edge, sizeof(row_t));
     }
 
+    /* DEBUGGING STATEMENTS */
+
+    std::cout << "\n--- KERNEL DATA VERIFICATION ---" << std::endl;
+
+    // 1. Verify the final calculated order
+    std::cout << "Final Vertex Order Sent to Kernel: [ ";
+    for(int node : order) {
+        std::cout << node << " ";
+    }
+    std::cout << "]" << std::endl;
+
+    // 2. Dump the raw buffer contents that the kernel will read
+    std::cout << "Raw Buffer Content (first 20 entries):" << std::endl;
+    std::cout << "Type      \t|\t src \t|\t dst \t|\t lsrc \t|\t ldst" << std::endl;
+    std::cout << "----------------------------------------------------------------" << std::endl;
+
+    // Calculate where the query data starts in the main buffer
+    unsigned long query_start_p = numDataEdges + dynfifo_space;
+
+    // Loop through and print the first few instructions
+    for (int i = 0; i < (numQueryVertices + numQueryEdges) && i < 20; ++i) {
+        // Cast raw row_t buffer data back to an edge_t to inspect it
+        edge_t temp_edge;
+        memcpy(&temp_edge, &edge_buf[query_start_p + i], sizeof(edge_t));
+
+        if (i < numQueryVertices) {
+            std::cout << "Vertex Inst\t|\t "
+                    << temp_edge.src << "\t|\t "
+                    << temp_edge.dst << "\t|\t "
+                    << temp_edge.labelsrc << "\t|\t "
+                    << temp_edge.labeldst << std::endl;
+        } else {
+            std::cout << "Edge Inst  \t|\t "
+                    << temp_edge.src << "\t|\t "
+                    << temp_edge.dst << "\t|\t "
+                    << temp_edge.labelsrc << "\t|\t "
+                    << temp_edge.labeldst << std::endl;
+        }
+    }
+    std::cout << "--- END KERNEL DATA VERIFICATION ---\n" << std::endl;
+
+    // --- END: DEBUGGING STATEMENTS ---
+
     tableListLength = tablelist.size();
     return {0, max_degree};
 
