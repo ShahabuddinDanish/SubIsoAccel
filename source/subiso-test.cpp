@@ -529,13 +529,6 @@ int main(int argc, char** argv)
     auto res_buf_bo = xrt::bo(device, RESULTS_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));
     auto res_buf = res_buf_bo.map<row_t*>(); // Map to host-accessible pointer
 
-    // Create buffer objects from host-side pointers
-    auto htb_buf_bo_b0 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(0));    // Argument 0 -> htb_buf -> Bank 0
-    auto htb_buf_bo_b1 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));    // Argument 1 -> htb_buf -> Bank 1
-    auto htb_buf_bo_b2 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));    // Argument 2 -> htb_buf -> Bank 2
-    auto htb_buf_bo_b3 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(3));    // Argument 3 -> htb_buf -> Bank 3
-    auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(0));
-
     for (const auto& entry : test) {
         const std::string& datagraph = entry.first;
         const std::vector<TestEntry>& entries = entry.second;
@@ -555,9 +548,6 @@ int main(int argc, char** argv)
             nDE);
 
 	    std::cout << "INFO: Datagraph Edges (nDE) loaded: " << nDE << std::endl; 
-
-	    // need to sync the datagraph buffer once per datagraph
-        // res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
         for (const TestEntry &testEntry : entries)
         {
@@ -582,9 +572,6 @@ int main(int argc, char** argv)
             // Get the max_degree from the pair
             int max_degree = res.second;
     
-            // query data is written into res_buf, so it needs to be synced again
-            // res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-
             std::cout << "INFO: Querygraph: " << testEntry.querygraph << ", Golden: " << testEntry.golden << std::endl;
             std::cout << "INFO: Words for dynamic fifo: " << dynfifo_space << std::endl;
             res_expected = stoull(testEntry.golden);
@@ -622,16 +609,23 @@ int main(int argc, char** argv)
             memset(htb_buf, 0, HASHTABLES_SPACE * sizeof(row_t));
             memset(bloom_p, 0, BLOOM_SPACE * sizeof(bloom_t));
 
+            // Create buffer objects from host-side pointers
+            auto htb_buf_bo_b0 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(0));      // Argument 0 -> htb_buf -> Bank 0
+            //auto htb_buf_bo_b1 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));    // Argument 1 -> htb_buf -> Bank 1
+            //auto htb_buf_bo_b2 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));    // Argument 2 -> htb_buf -> Bank 2
+            //auto htb_buf_bo_b3 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(3));    // Argument 3 -> htb_buf -> Bank 3
+            auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(2));
+
             // Sync the buffers that contain input data to the device
             std::cout << "Synchronize input buffer data to device global memory." << std::endl;
-            // htb_buf and bloom_p are output-only from the CPU's perspective (written to by the kernel)
-            // but the kernel may read from them as well later, so sync. res_buf contains the graph data
+            /*
             htb_buf_bo_b0.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             htb_buf_bo_b1.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             htb_buf_bo_b2.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             htb_buf_bo_b3.sync(XCL_BO_SYNC_BO_TO_DEVICE);
             bloom_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
-	        res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
+	        */
+            res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
             #if DEBUG_INTERFACE
             // calculate the total number of items in the buffer
@@ -643,9 +637,9 @@ int main(int argc, char** argv)
             std::cout << "Setting kernel arguments and launching." << std::endl;
 
             run.set_arg(0, htb_buf_bo_b0);
-            run.set_arg(1, htb_buf_bo_b1);
-            run.set_arg(2, htb_buf_bo_b2);
-            run.set_arg(3, htb_buf_bo_b3);
+            run.set_arg(1, htb_buf_bo_b0);
+            run.set_arg(2, htb_buf_bo_b0);
+            run.set_arg(3, htb_buf_bo_b0);
             run.set_arg(4, bloom_bo);
             run.set_arg(5, res_buf_bo);
             run.set_arg(6, nQV);
