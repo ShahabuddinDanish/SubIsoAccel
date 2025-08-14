@@ -633,12 +633,13 @@ int main(int argc, char** argv)
             bloom_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 	        res_buf_bo.sync(XCL_BO_SYNC_BO_TO_DEVICE);
 
-            // DEBUGGING
+            #if DEBUG_INTERFACE
             // calculate the total number of items in the buffer
             size_t total_items_to_dump = nDE + nQV + nQE;
             // data starts at the 'dynfifo_space' offset
             dump_buffer_to_file("xrt_host_fifo.bin", res_buf + dynfifo_space, total_items_to_dump);
-
+            #endif
+            
             std::cout << "Setting kernel arguments and launching." << std::endl;
 
             run.set_arg(0, htb_buf_bo_b0);
@@ -704,24 +705,18 @@ int main(int argc, char** argv)
                 uint32_t high = krnl.read_register(counter_addrs[i] + 4);
                 counters[i] = (static_cast<uint64_t>(high) << 32) | low;
             }
-#endif
-
-            std::cout << "Expected Matches: " << res_expected << " Actual Matches: " << total_matches << std::endl;
-            std::cout << "Execution Time: " << kernel_time.count() << " s" << std::endl;
-            /*
-            std::cout << "Dynamic FIFO Overflow: " << (dynfifo_overflow ? "YES" : "NO") << std::endl;
-
-            flag &= (res_actual == res_expected);
             std::cout << "Debug counters:" << std::endl;
             for (int g = 0; g < 12; g++) {
                 std::cout << "\t" << counters_meaning[g] << ": " << counters[g] << std::endl;
             }
-            */
+#endif
+
+            std::cout << "Expected Matches: " << res_expected << " Actual Matches: " << total_matches << std::endl;
+            std::cout << "Execution Time: " << kernel_time.count() << " s" << std::endl;
         }
     }
     free(htb_buf);
     free(bloom_p);
     //free(res_buf);
     return 0;
-    //return !flag;
 }
