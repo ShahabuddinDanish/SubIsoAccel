@@ -1,0 +1,2 @@
+config_array_partition -complete_threshold 1
+config_interface -m_axi_latency=1
