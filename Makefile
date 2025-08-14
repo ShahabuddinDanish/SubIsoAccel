@@ -73,7 +73,6 @@ VPP_FLAGS += --hls.clock 300000000:$(KERNEL_NAME)
 
 # Kernel Linker Flags (V++)
 VPP_LDFLAGS += -g
-VPP_LDFLAGS += --config $(KERNEL_CFG)
 
 ############################## Host Compiler ##############################
 
