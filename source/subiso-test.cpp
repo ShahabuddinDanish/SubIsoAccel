@@ -581,17 +581,33 @@ int main(int argc, char** argv)
             unsigned char h2 = static_cast<unsigned char>(std::min(max_degree + 1, 7));
             std::cout << "INFO: Dynamically calculated H1=" << (int)h1 << ", H2=" << (int)h2 << std::endl;
 
+            if (h1 + h2 <= 14) {
+                h2 = 14 - h1; // assert H1+H2 atleast 14
+                std::cout << "INFO: Adjusted H2 to " << (int)h2 << " to meet minimum hash width sum requirement." << std::endl;
+            }
+
             auto blocks = tablelist_length * pow(2, (h1 + h2 - 14));
-            if (blocks > 4096){
-                std::cout << "Error: Blocks overflow." << std::endl;
-                return -1;
+            while (blocks > 4096) {
+                if (h1 + (h2 - 1) <= 14) {
+                    std::cout << "ERROR: Cannot reduce h2 further without violating minimum hash width rule." << std::endl;
+                    return -1;
+                }
+                h2--;
+                std::cout << "INFO: Reducing H2 to " << (int)h2 << " due to block overflow (" << blocks << " > 4096)." << std::endl;
+                blocks = tablelist_length * pow(2, (h1 + h2 - 14));
             }
 
             auto hashtable_size = tablelist_length * pow(2, (h1 + h2)) * 4;
             hashtable_size += nDE * 16;
-            if (hashtable_size > HASHTABLES_SPACE * sizeof(row_t)){
-                std::cout << "Error: Hashtable overflow." << std::endl;
-                return -1;
+            while (hashtable_size > HASHTABLES_SPACE * sizeof(row_t)) {
+                if (h1 + (h2 - 1) <= 14) {
+                    std::cout << "ERROR: Cannot reduce h2 further without violating minimum hash width rule." << std::endl;
+                    return -1;
+                }
+                h2--;
+                std::cout << "INFO: Reducing H2 to " << (int)h2 << " due to hashtable memory overflow." << std::endl;
+                hashtable_size = tablelist_length * pow(2, (h1 + h2)) * 4;
+                hashtable_size += nDE * 16;
             }
 
             auto bloom_size = tablelist_length * pow(2, h1) * 64;
