@@ -57,6 +57,7 @@
 // #define HTB_SIZE            (1UL << (HASH_WIDTH_FIRST + HASH_WIDTH_SECOND - (DDR_BIT - COUNTER_WIDTH)))
 
 #define EDGE_ROW            (1UL << (DDR_BIT - EDGE_WIDTH))
+#define VERTICES_PER_ROW    (DDR_WORD / VERTEX_WIDTH_BIT)
 
 #define PROPOSE_BATCH_LOG   6
 #define MERGE_IN_STREAMS    2

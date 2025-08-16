@@ -714,7 +714,7 @@ READMIN_EDGE_TASK_LOOP:
 
       row_t row = m_axi[tuple_in.rowstart + counter];
       for (int i = 0; i < EDGE_ROW; i++) {
-#pragma HLS unroll
+        #pragma HLS unroll
         ap_uint<V_ID_W> indexing_v, indexed_v;
         ap_uint<FULL_HASH_W> hash_out;
         ap_uint<V_ID_W * 2> edge = row.range(((i + 1) << E_W) - 1, i << E_W);
@@ -1453,8 +1453,7 @@ mwj_merge_solandset(hls::stream<sol_node_t<vertex_t>>& stream_sol_in,
   stream_sol_out.write({ node, pos, last, sol, stop });
 }
 
-void
-mwj_assembly(row_t* m_axi,
+void mwj_assembly(row_t* m_axi,
              const unsigned int n_candidate,
              const unsigned int start_candidate,
              const unsigned int n_queryv,
@@ -1471,15 +1470,21 @@ mwj_assembly(row_t* m_axi,
   ap_uint<32> nodes_read = 0;
   bool stop = false;
 
+  // comes from utils.hpp and calculates the log base 2 at compile time
+  const int NODES_PER_ROW_LOG = xf::database::details::Log2<VERTICES_PER_ROW>::value;
+
 ASSEMBLY_TASK_LOOP:
   do {
     // Test if there are some node from start batch
     if (nodes_read < n_candidate) {
-      ap_uint<2> word_select = nodes_read.range(1, 0);
-      ap_uint<32> row_select = nodes_read >> 2;
+      ap_uint<32> row_select = nodes_read / VERTICES_PER_ROW;
+
+      // parametric modulo 4 or 16. It selects the correct 32-bit "slot"
+      ap_uint<NODES_PER_ROW_LOG> word_select = nodes_read % VERTICES_PER_ROW;
+      
       row_t row = m_axi[start_candidate + row_select];
-      ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1,
-                                       V_ID_W * word_select);
+
+      ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1, V_ID_W * word_select);
       
       /* False extension for single node solutions */
       stream_partial_out.write(FAKE_NODE);
