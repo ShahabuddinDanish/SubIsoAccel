@@ -53,6 +53,14 @@ struct host_uint128_t {
     uint64_t high;
 };
 
+// Define a 512-bit type for the host
+struct host_uint512_t {
+    uint64_t data[8]; // 8 * 64 bits = 512 bits
+};
+
+typedef host_uint512_t row_t;
+typedef host_uint128_t bloom_t;
+
 // Parameter definitions
 
 /* Query graph definitions */
@@ -69,15 +77,12 @@ struct host_uint128_t {
 #define DYN_FIFO_DEPTH      64
 #define DYN_FIFO_BURST      32
 
-#define DDR_BIT             7
+#define DDR_BIT             9
 #define DDR_WORD            (1UL << DDR_BIT)
 
 #define HASHTABLES_SPACE    ((1UL << 28) / (DDR_WORD / 8))  //~ 256 MB
 #define BLOOM_SPACE         ((1UL << 27) / (DDR_WORD / 8))  //~ 128 MB
 #define RESULTS_SPACE		(DYN_FIFO_BURST * (1UL << 21))  //~ 1 << 30, 1024 MB
-
-typedef host_uint128_t row_t;
-typedef host_uint128_t bloom_t;
 
 struct edge_t {
     uint32_t src;
@@ -147,6 +152,11 @@ void load_datagraphs(
         vToLabelData.insert(std::make_pair(node_t, label_t));
     }
     
+    row_t temp_word; 
+    int pack_counter = 0;
+    // initially reset the buffer to zeros
+    memset(&temp_word, 0, sizeof(row_t));
+
     std::cout << "Loading datagraph in DDR..." << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
 
@@ -159,8 +169,28 @@ void load_datagraphs(
         edge.labeldst = vToLabelData.at(nodedst_t);
         edge.src = nodesrc_t;
         edge.dst = nodedst_t;
-        //edge_buf[edge_buf_p++] = *((row_t*)&edge); /*dereferencing type-punned pointer will break strict-aliasing rules warning*/
-        memcpy(&edge_buf[edge_buf_p++], &edge, sizeof(row_t));
+
+        // pack the 128-bit edge into temp_word and cast temp_word to a char* to do byte-level pointer access
+        memcpy( ((char*)&temp_word) + (pack_counter * sizeof(edge_t)), 
+                &edge, 
+                sizeof(edge_t) );
+        
+        pack_counter++;
+
+        // if temp_word is full, write it to the main buffer and reset
+        if (pack_counter == 4) {
+            // Copy the full temp_word to the edge buffer
+            memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
+            
+            // Reset the counter and the temp_word
+            pack_counter = 0;
+            memset(&temp_word, 0, sizeof(row_t));
+        }
+    }
+
+    // after the loop, handle any leftover edges that didn't make a full batch of 4
+    if (pack_counter > 0) {
+        memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
     }
 
     auto end = std::chrono::high_resolution_clock::now();

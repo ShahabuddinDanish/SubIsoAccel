@@ -48,7 +48,7 @@
 #define DYN_FIFO_DEPTH      64
 #define DYN_FIFO_BURST      32
 
-#define DDR_BIT             7
+#define DDR_BIT             9
 #define DDR_WORD            (1UL << DDR_BIT)
 
 #define HASHTABLES_SPACE    ((1UL << 28) / (DDR_WORD / 8))  //~ 256 MB

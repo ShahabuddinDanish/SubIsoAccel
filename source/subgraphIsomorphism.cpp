@@ -1943,21 +1943,21 @@ void subgraphIsomorphism(row_t htb_buf0[HASHTABLES_SPACE],
 {
 
 #pragma HLS INTERFACE mode=m_axi port=htb_buf0 bundle=prop_batch \
-    max_widen_bitwidth=128 latency=1 depth=100000000
+    max_widen_bitwidth=512 latency=1 depth=100000000
 #pragma HLS INTERFACE mode=m_axi port=htb_buf1 bundle=cache \
-    max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+    max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
     latency=1 depth=100000000
 #pragma HLS INTERFACE mode=m_axi port=htb_buf2 bundle=readmin_c \
-    max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+    max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
     latency=1 depth=100000000
 #pragma HLS INTERFACE mode=m_axi port=htb_buf3 bundle=readmin_e \
-    max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+    max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
     latency=1 depth=100000000
 #pragma HLS INTERFACE mode=m_axi port=res_buf bundle=fifo \
-    max_widen_bitwidth=128 max_read_burst_length=32 max_write_burst_length=32 \
+    max_widen_bitwidth=512 max_read_burst_length=32 max_write_burst_length=32 \
     latency=1 depth=100000000
 #pragma HLS INTERFACE mode=m_axi port=bloom_p bundle=bloom \
-    max_widen_bitwidth=128 latency=20 depth=100000000
+    max_widen_bitwidth=512 latency=20 depth=100000000
 
 #pragma HLS alias ports = htb_buf0, htb_buf1, htb_buf2, htb_buf3 distance = 0
 
@@ -2081,33 +2081,33 @@ void subgraphIsomorphism(row_t htb_buf0[HASHTABLES_SPACE],
 {
 
 #pragma HLS INTERFACE mode=m_axi port=htb_buf0 bundle=cache \
-    max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+    max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
     latency=0
 // #pragma HLS INTERFACE mode=m_axi port=htb_buf1 bundle=readmin_c \
-//     max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+//     max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
 //     latency=0
 #pragma HLS INTERFACE mode=m_axi port=htb_buf2 bundle=readmin_e \
-    max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+    max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
     latency=0 max_read_burst_length=16
 // #pragma HLS INTERFACE mode=m_axi port=htb_buf3 bundle=prop_batch \
-//     max_widen_bitwidth=128 latency=0
+//     max_widen_bitwidth=512 latency=0
 // #pragma HLS INTERFACE mode=m_axi port=htb_buf2 bundle=readmin_e \
-//     max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+//     max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
 //     latency=0 max_read_burst_length=16 channel=0
 #pragma HLS INTERFACE mode=m_axi port=htb_buf1 bundle=readmin_c \
-    max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+    max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
     latency=0 max_read_burst_length=16 channel=1
 #pragma HLS INTERFACE mode=m_axi port=htb_buf3 bundle=readmin_c \
-    max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+    max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
     latency=0 max_read_burst_length=16 channel=2
 // #pragma HLS INTERFACE mode=m_axi port=htb_buf0 bundle=readmin_e \
-//     max_widen_bitwidth=128 num_write_outstanding=1 max_write_burst_length=2 \
+//     max_widen_bitwidth=512 num_write_outstanding=1 max_write_burst_length=2 \
 //     latency=0 max_read_burst_length=16 channel=3
 #pragma HLS INTERFACE mode=m_axi port=res_buf bundle=fifo \
-    max_widen_bitwidth=128 max_read_burst_length=32 max_write_burst_length=32 \
+    max_widen_bitwidth=512 max_read_burst_length=32 max_write_burst_length=32 \
     latency=0
 #pragma HLS INTERFACE mode=m_axi port=bloom_p bundle=bloom \
-    max_widen_bitwidth=128 latency=20
+    max_widen_bitwidth=512 latency=20
 
 // #pragma HLS alias ports=htb_buf0,htb_buf1,htb_buf2,htb_buf3 distance=0
 
