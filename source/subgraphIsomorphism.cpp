@@ -1258,7 +1258,7 @@ mwj_verify(AdjHT* hTables,
   ap_uint<V_ID_W> candidate_v;
   ap_uint<V_ID_W> indexing_v;
   unsigned char tableIndex;
-  ap_uint<128> edge_block[(1UL << CACHE_WORDS_PER_LINE)];
+  row_t edge_block[(1UL << CACHE_WORDS_PER_LINE)];
 #pragma HLS array_partition variable = edge_block type = complete
   tuple_out.stop = false;
 
