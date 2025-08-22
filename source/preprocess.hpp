@@ -1444,7 +1444,7 @@ COUNTER_TO_OFFSET_BLOCK_LOOP:
 
     storeEdgePerBlockWrap<NODE_W, LAB_W, LKP3_HASH_W, MAX_HASH_W, MAX_LABELS>(
       &edge_buf[dynfifo_space],
-      bloom_p,
+      reinterpret_cast<row_t*>(bloom_p),
       hash1_w,
       hash2_w,
       labelToTable,
@@ -1478,7 +1478,7 @@ STORE_EDGES_POINTER_LOOP:
                LKP3_HASH_W,
                MAX_HASH_W,
                MAX_LABELS>(
-      bloom_p, htb_buf, hTables0, hash1_w, hash2_w, numTables, block_n_edges);
+      reinterpret_cast<row_t*>(bloom_p), htb_buf, hTables0, hash1_w, hash2_w, numTables, block_n_edges);
 
     writeBloom<T_DDR,
                T_BLOOM,
