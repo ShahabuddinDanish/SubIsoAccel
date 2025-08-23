@@ -97,7 +97,7 @@ void dump_buffer_to_file(const std::string& filename, row_t* buffer, size_t num_
         std::cerr << "Error: Could not open " << filename << " for writing." << std::endl;
         return;
     }
-    // Each 'row_t' is 16 bytes.
+
     outfile.write(reinterpret_cast<const char*>(buffer), num_items * sizeof(row_t));
     outfile.close();
     std::cout << "INFO: Dumped " << num_items << " items to " << filename << std::endl;
@@ -120,9 +120,7 @@ void load_datagraphs(
     
     /* Remove "../" to make paths correct */
     datafile = datafile.substr(3);
-    
     std::ifstream fData(datafile);
-    
     if (!fData.is_open()){
         std::cout << "Datagraph file opening failed.\n";
         return;
@@ -157,7 +155,7 @@ void load_datagraphs(
     // initially reset the buffer to zeros
     memset(&temp_word, 0, sizeof(row_t));
 
-    std::cout << "Loading datagraph in DDR..." << std::endl;
+    std::cout << "Loading and packing datagraph in DDR..." << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
 
     /* Stream edges */
@@ -165,6 +163,7 @@ void load_datagraphs(
         unsigned long nodesrc_t, nodedst_t;
         std::getline(fData, fLine);
         sscanf(fLine.c_str(), "%*c %lu %lu", &nodesrc_t, &nodedst_t);
+
         edge.labelsrc = vToLabelData.at(nodesrc_t); 
         edge.labeldst = vToLabelData.at(nodedst_t);
         edge.src = nodesrc_t;
@@ -334,6 +333,10 @@ std::pair<int, int> load_querygraphs(
         order.push_back(following);
     }
 
+    row_t temp_word;
+    int pack_counter = 0;
+    memset(&temp_word, 0, sizeof(row_t));
+
     /* Stream matching order */
     std::cout << "Query vertex order: [";
     for(int count = 0; count < numQueryVertices; count++){
@@ -345,7 +348,18 @@ std::pair<int, int> load_querygraphs(
 
         std::cout << order[count] << " ";
 
-        memcpy(&edge_buf[edge_buf_p++], &edge, sizeof(row_t));
+        memcpy( ((char*)&temp_word) + (pack_counter * sizeof(edge_t)), 
+                &edge, 
+                sizeof(edge_t) );
+        
+        pack_counter++;
+
+        if (pack_counter == 4) {
+            memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
+            pack_counter = 0;
+            memset(&temp_word, 0, sizeof(row_t));
+        }
+
     }
     std::cout << "]" << std::endl;
     
@@ -358,7 +372,22 @@ std::pair<int, int> load_querygraphs(
         edge.dst = std::get<1>(tuple_edge);
         edge.labelsrc = std::get<2>(tuple_edge);
         edge.labeldst = std::get<3>(tuple_edge);
-        memcpy(&edge_buf[edge_buf_p++], &edge, sizeof(row_t));
+
+        memcpy( ((char*)&temp_word) + (pack_counter * sizeof(edge_t)), 
+                &edge, 
+                sizeof(edge_t) );
+        
+        pack_counter++;
+
+        if (pack_counter == 4) {
+            memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
+            pack_counter = 0;
+            memset(&temp_word, 0, sizeof(row_t));
+        }
+    }
+    
+    if (pack_counter > 0) {
+        memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
     }
 
     /* DEBUGGING STATEMENTS */
@@ -384,7 +413,7 @@ std::pair<int, int> load_querygraphs(
     for (int i = 0; i < (numQueryVertices + numQueryEdges) && i < 20; ++i) {
         // Cast raw row_t buffer data back to an edge_t to inspect it
         edge_t temp_edge;
-        memcpy(&temp_edge, &edge_buf[query_start_p + i], sizeof(edge_t));
+        memcpy(&temp_edge, ((char*)&edge_buf[query_start_p]) + i * sizeof(edge_t), sizeof(edge_t));
 
         if (i < numQueryVertices) {
             std::cout << "Vertex Inst\t|\t "
@@ -402,11 +431,10 @@ std::pair<int, int> load_querygraphs(
     }
     std::cout << "--- END KERNEL DATA VERIFICATION ---\n" << std::endl;
 
-    // --- END: DEBUGGING STATEMENTS ---
+    /* END DEBUGGING STATEMENTS */
 
     tableListLength = tablelist.size();
     return {0, max_degree};
-
 }
 
 int main(int argc, char** argv)
@@ -641,7 +669,7 @@ int main(int argc, char** argv)
             }
 
             auto bloom_size = tablelist_length * pow(2, h1) * 64;
-            if (bloom_size > BLOOM_SPACE * sizeof(row_t)){
+            if (bloom_size > BLOOM_SPACE * sizeof(bloom_t)){
                 std::cout << "Error: Bloom overflow." << std::endl;
                 return -1;
             }
