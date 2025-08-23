@@ -61,7 +61,7 @@
 
 #define PROPOSE_BATCH_LOG   6
 #define MERGE_IN_STREAMS    2
-#define CACHE_WORDS_PER_LINE 3
+#define CACHE_WORDS_PER_LINE 1
 #define MAX_HASH_TABLE_BIT  20
 #define HASH_LOOKUP3_BIT    64
 
