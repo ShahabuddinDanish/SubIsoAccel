@@ -158,8 +158,8 @@ else
 	./$(EXECUTABLE) $(CMD_ARGS) $(EXTRA_ARGS)
 endif
 
-# Rule to run for test (similar to run)
-test: all
+# Rule to only run the host application with the current xclbin for test
+test: host
 	$(ECHO) "Running test..."
 ifeq ($(TARGET),$(filter $(TARGET),sw_emu hw_emu))
 	cp -f $(EMCONFIG_DIR)/emconfig.json .
@@ -217,7 +217,7 @@ help:
 	$(ECHO) "      Command to run the application. Use EXTRA_ARGS for host args."
 	$(ECHO) ""
 	$(ECHO) "  make test TARGET=<sw_emu/hw_emu/hw> PLATFORM=<FPGA platform> [EXTRA_ARGS=\"<host_app_args>\"]"
-	$(ECHO) "      Command to run the application for testing."
+	$(ECHO) "      Command to run the application for testing using the current build."
 	$(ECHO) ""
 	$(ECHO) "  make clean"
 	$(ECHO) "      Command to remove intermediate files."
