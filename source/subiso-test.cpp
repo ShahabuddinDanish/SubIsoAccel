@@ -584,7 +584,7 @@ int main(int argc, char** argv)
     auto bo_flags = xrt::bo::flags::normal;
 
     // Create device buffer
-    auto res_buf_bo = xrt::bo(device, RESULTS_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));
+    auto res_buf_bo = xrt::bo(device, RESULTS_SPACE * sizeof(row_t), bo_flags, krnl.group_id(5));
     auto res_buf = res_buf_bo.map<row_t*>(); // Map to host-accessible pointer
 
     for (const auto& entry : test) {
@@ -688,7 +688,7 @@ int main(int argc, char** argv)
             //auto htb_buf_bo_b1 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));    // Argument 1 -> htb_buf -> Bank 1
             //auto htb_buf_bo_b2 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));    // Argument 2 -> htb_buf -> Bank 2
             //auto htb_buf_bo_b3 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(3));    // Argument 3 -> htb_buf -> Bank 3
-            auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(1));
+            auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(4));
 
             // Sync the buffers that contain input data to the device
             std::cout << "Synchronize input buffer data to device global memory." << std::endl;
