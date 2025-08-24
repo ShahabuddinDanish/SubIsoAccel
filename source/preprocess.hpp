@@ -1583,8 +1583,11 @@ INITIALIZE_LABELTOTABLE_LOOP:
         }
     }
 
+    // Calculate the number of 512-bit words the data graph occupies
+    const unsigned long num_data_graph_words = (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+
     buildTableDescriptors<MAX_QV, MAX_TB, NODE_W, LAB_W, MAX_LABELS>(
-      &edge_buf[dynfifo_space + numDataEdges],
+      &edge_buf[dynfifo_space + num_data_graph_words],
       qVertices,
       labelToTable,
       numTables,
