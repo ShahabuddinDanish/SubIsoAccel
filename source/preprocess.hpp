@@ -65,11 +65,11 @@ struct counter_tuple_t
   bool stop;
 };
 
-template<typename ROW_T>
+template<typename PROCESSED_EDGE_T>
 struct store_tuple_t
 {
   unsigned int address;
-  ROW_T edge;
+  PROCESSED_EDGE_T edge;
   bool stop;
 };
 
@@ -98,90 +98,105 @@ buildTableDescriptors(row_t* edge_buf,
     /* Filling information about query vertices and coping
      * the vertex order needed by multiway join */
 FILL_ORDER_LOOP:
-    for (int g = 0; g < numQueryVert; g++) {
-#pragma HLS pipeline II = 1
-      ap_uint<NODE_W> nodesrc =
-        edge_buf[g].range(SRC_NODE + NODE_W - 1, SRC_NODE);
-#ifndef __SYNTHESIS__
-      assert(numQueryVert < (MAX_QV));
-#endif
-      fromNumToPos[nodesrc] = g;
+    for (int g_word = 0; g_word < (numQueryVert + INSTR_PER_WORD - 1) / INSTR_PER_WORD; g_word++) {
+#pragma HLS pipeline II = INSTR_PER_WORD
+      row_t packed_instr = edge_buf[g_word]; // Read one 512-bit word
+
+      // Inner loop to unpack instructions
+      for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
+#pragma HLS unroll
+        int g = g_word * INSTR_PER_WORD + g_unpack;
+        if (g < numQueryVert) {
+            ap_uint<INSTR_WIDTH> instr = packed_instr.range(INSTR_WIDTH * (g_unpack + 1) - 1, INSTR_WIDTH * g_unpack);
+            ap_uint<NODE_W> nodesrc = instr.range(SRC_NODE + NODE_W - 1, SRC_NODE);
+            fromNumToPos[nodesrc] = g;
+        }
+      }
     }
 
     /* Creating table descriptors */
+    unsigned int query_edge_word_offset = (numQueryVert + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
 CREATE_TABDESC_LOOP:
-    for (int s = 0; s < numQueryEdge; s++) {
-#pragma HLS pipeline II = 4
-      bool dirEdge = false;
-      ap_uint<8> index = 0;
-      row_t edge = edge_buf[s + numQueryVert];
-      ap_uint<LAB_W> labeldst =
-        edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
-      ap_uint<LAB_W> labelsrc =
-        edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
-      ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
-      ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
-      unsigned short nodeSrcPos = fromNumToPos[nodesrc];
-      unsigned short nodeDstPos = fromNumToPos[nodedst];
+    for (int s_word = 0; s_word < (numQueryEdge + INSTR_PER_WORD - 1) / INSTR_PER_WORD; s_word++) {
+#pragma HLS pipeline II = INSTR_PER_WORD
+      row_t packed_edge = edge_buf[query_edge_word_offset + s_word];
 
-      // Direction of the table is used to understand if the
-      // source vertex is indexed or indexing the table
-      if (nodeSrcPos < nodeDstPos)
-        dirEdge = true;
+      for (int s_unpack = 0; s_unpack < INSTR_PER_WORD; s_unpack++) {
+#pragma HLS UNROLL
+        int s = s_word * INSTR_PER_WORD + s_unpack;
+        if (s < numQueryEdge) {
+          bool dirEdge = false;
+          ap_uint<8> index = 0;
+          ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (s_unpack + 1) - 1, INSTR_WIDTH * s_unpack);
 
-#ifndef __SYNTHESIS__
-      std::cout << (unsigned int)nodesrc << "(" << (int)labelsrc << ")"
-                << " -> " << (unsigned int)nodedst << "(" << (int)labeldst
-                << ")" << std::endl;
-#endif
-
-      // Saving the index of the table in the labels matrix
-      // which is indexed by [indexing label][indexed label]
-      if (dirEdge) {
-        index = labelToTable[labelsrc][labeldst];
-        if (index == 0) {
-          index = ++numTables;
-        }
-        labelToTable[labelsrc][labeldst] = index;
-      } else {
-        index = labelToTable[labeldst][labelsrc];
-        if (index == 0) {
-          index = ++numTables;
-        }
-        labelToTable[labeldst][labelsrc] = index;
-      }
+          ap_uint<LAB_W> labeldst = edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
+          ap_uint<LAB_W> labelsrc = edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
+          ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
+          ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
+          unsigned short nodeSrcPos = fromNumToPos[nodesrc];
+          unsigned short nodeDstPos = fromNumToPos[nodedst];
+    
+          // Direction of the table is used to understand if the
+          // source vertex is indexed or indexing the table
+          if (nodeSrcPos < nodeDstPos) {
+            dirEdge = true;
+          }
 
 #ifndef __SYNTHESIS__
-      if (dirEdge) {
-        std::cout << "Table " << (int)index - 1 << ": " << (int)labelsrc
-                  << " -> " << (int)labeldst << std::endl;
-      } else {
-        std::cout << "Table " << (int)index - 1 << ": " << (int)labeldst
-                  << " <- " << (int)labelsrc << std::endl;
-      }
+            std::cout << (unsigned int)nodesrc << "(" << (int)labelsrc << ")"
+                      << " -> " << (unsigned int)nodedst << "(" << (int)labeldst
+                      << ")" << std::endl;
 #endif
 
-      /* Linking vertices to tables */
-      if (dirEdge) {
-        unsigned char idx = qVertices[nodeSrcPos].numTablesIndexing;
-        qVertices[nodeSrcPos].tables_indexing[idx] = index - 1;
-        qVertices[nodeSrcPos].numTablesIndexing++;
+          // Saving the index of the table in the labels matrix
+          // which is indexed by [indexing label][indexed label]
+          if (dirEdge) {
+            index = labelToTable[labelsrc][labeldst];
+            if (index == 0) {
+              index = ++numTables;
+            }
+            labelToTable[labelsrc][labeldst] = index;
+          } else {
+            index = labelToTable[labeldst][labelsrc];
+            if (index == 0) {
+              index = ++numTables;
+            }
+            labelToTable[labeldst][labelsrc] = index;
+          }
 
-        idx = qVertices[nodeDstPos].numTablesIndexed;
-        qVertices[nodeDstPos].tables_indexed[idx] = index - 1;
-        qVertices[nodeDstPos].vertex_indexing[idx] = nodeSrcPos;
+#ifndef __SYNTHESIS__
+          if (dirEdge) {
+            std::cout << "Table " << (int)index - 1 << ": " << (int)labelsrc
+                      << " -> " << (int)labeldst << std::endl;
+          } else {
+            std::cout << "Table " << (int)index - 1 << ": " << (int)labeldst
+                      << " <- " << (int)labelsrc << std::endl;
+          }
+#endif
 
-        qVertices[nodeDstPos].numTablesIndexed++;
-      } else {
-        unsigned char idx = qVertices[nodeDstPos].numTablesIndexing;
-        qVertices[nodeDstPos].tables_indexing[idx] = index - 1;
-        qVertices[nodeDstPos].numTablesIndexing++;
+          /* Linking vertices to tables */
+          if (dirEdge) {
+            unsigned char idx = qVertices[nodeSrcPos].numTablesIndexing;
+            qVertices[nodeSrcPos].tables_indexing[idx] = index - 1;
+            qVertices[nodeSrcPos].numTablesIndexing++;
 
-        idx = qVertices[nodeSrcPos].numTablesIndexed;
-        qVertices[nodeSrcPos].tables_indexed[idx] = index - 1;
-        qVertices[nodeSrcPos].vertex_indexing[idx] = nodeDstPos;
+            idx = qVertices[nodeDstPos].numTablesIndexed;
+            qVertices[nodeDstPos].tables_indexed[idx] = index - 1;
+            qVertices[nodeDstPos].vertex_indexing[idx] = nodeSrcPos;
 
-        qVertices[nodeSrcPos].numTablesIndexed++;
+            qVertices[nodeDstPos].numTablesIndexed++;
+          } else {
+            unsigned char idx = qVertices[nodeDstPos].numTablesIndexing;
+            qVertices[nodeDstPos].tables_indexing[idx] = index - 1;
+            qVertices[nodeDstPos].numTablesIndexing++;
+
+            idx = qVertices[nodeSrcPos].numTablesIndexed;
+            qVertices[nodeSrcPos].tables_indexed[idx] = index - 1;
+            qVertices[nodeSrcPos].vertex_indexing[idx] = nodeDstPos;
+
+            qVertices[nodeSrcPos].numTablesIndexed++;
+          }
+        }
       }
     }
 }
@@ -561,74 +576,77 @@ readEdgesPerBlock(row_t* edge_buf,
     bool inverted = false;
 
 READ_EDGES_PER_BLOCK_LOOP:
-    for (auto s = 0; s < numDataEdges; s++) {
-#pragma HLS pipeline II = 1
+    for (auto s_word = 0; s_word < (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD; s_word++) {
+#pragma HLS pipeline II = INSTR_PER_WORD
+      row_t packed_edge = edge_buf[s_word]; // Read one 512-bit word
 
-        row_t edge = edge_buf[s];
+      for (int s_unpack = 0; s_unpack < INSTR_PER_WORD; s_unpack++) {
+#pragma HLS unroll
+        if ((s_word * INSTR_PER_WORD + s_unpack) < numDataEdges) {
+          ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (s_unpack + 1) - 1, INSTR_WIDTH * s_unpack);
 
-        ap_uint<LAB_W> labeldst =
-          edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
-        ap_uint<LAB_W> labelsrc =
-          edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
-        ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
-        ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
-        
-        // Retrieve index of table with source as indexing vertex
-        ap_uint<8> index0 = labelToTable[labelsrc][labeldst];
-        // Retrieve index of table with destination as indexing vertex
-        ap_uint<8> index1 = labelToTable[labeldst][labelsrc];
+          ap_uint<LAB_W> labeldst = edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
+          ap_uint<LAB_W> labelsrc = edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
+          ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
+          ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
+      
+          // Retrieve index of table with source as indexing vertex
+          ap_uint<8> index0 = labelToTable[labelsrc][labeldst];
+          // Retrieve index of table with destination as indexing vertex
+          ap_uint<8> index1 = labelToTable[labeldst][labelsrc];
 
-        /* Compute indices for hash table */
-        ap_uint<LKP3_HASH_W> hash_out0;
-        ap_uint<LKP3_HASH_W> hash_out1;
-        xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
+          /* Compute indices for hash table */
+          ap_uint<LKP3_HASH_W> hash_out0;
+          ap_uint<LKP3_HASH_W> hash_out1;
+          xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
 
-        ap_uint<MAX_HASH_W> hashsrc = hash_out0.range(MAX_HASH_W - 1, 0);
-        hashsrc = hashsrc.range(hash1_w - 1, 0);
+          ap_uint<MAX_HASH_W> hashsrc = hash_out0.range(MAX_HASH_W - 1, 0);
+          hashsrc = hashsrc.range(hash1_w - 1, 0);
 
-        xf::database::details::hashlookup3_core<NODE_W>(nodedst, hash_out1);
+          xf::database::details::hashlookup3_core<NODE_W>(nodedst, hash_out1);
 
-        ap_uint<MAX_HASH_W> hashdst = hash_out1.range(MAX_HASH_W - 1, 0);
-        hashdst = hashdst.range(hash1_w - 1, 0);
+          ap_uint<MAX_HASH_W> hashdst = hash_out1.range(MAX_HASH_W - 1, 0);
+          hashdst = hashdst.range(hash1_w - 1, 0);
 
-        /* Compute inside which block the edge will finish, in the meanwhile
-        also adjust the edge as indexing -> indexed, and also add the hash
-        values */
-        unsigned short address_intable0 =
-          hashsrc.range(hash1_w - 1, hash1_w - block_per_table);
-        unsigned int address0 = ((index0 - 1) << block_per_table) + address_intable0;
-        unsigned short address_intable1 =
-          hashdst.range(hash1_w - 1, hash1_w - block_per_table);
-        unsigned int address1 = ((index1 - 1) << block_per_table) + address_intable1;
+          /* Compute inside which block the edge will finish, in the meanwhile
+          also adjust the edge as indexing -> indexed, and also add the hash
+          values */
+          unsigned short address_intable0 = hashsrc.range(hash1_w - 1, hash1_w - block_per_table);
+          unsigned int address0 = ((index0 - 1) << block_per_table) + address_intable0;
+          unsigned short address_intable1 = hashdst.range(hash1_w - 1, hash1_w - block_per_table);
+          unsigned int address1 = ((index1 - 1) << block_per_table) + address_intable1;
 
-        /* This useless if is to explain to Vitis HLS 2022.2 that two write in
-         * the same stream cannot happen in one cycle */
-        if (index0 != 0 && index1 != 0) {
-          if (inverted){
-            stream_address[1].write({ address0, false });
-            stream_address[0].write({ address1, false });
-          } else {
-            stream_address[0].write({ address0, false });
-            stream_address[1].write({ address1, false });
+          /* This useless if is to explain to Vitis HLS 2022.2 that two write in
+          * the same stream cannot happen in one cycle */
+          if (index0 != 0 && index1 != 0) {
+            if (inverted){
+              stream_address[1].write({ address0, false });
+              stream_address[0].write({ address1, false });
+            } else {
+              stream_address[0].write({ address0, false });
+              stream_address[1].write({ address1, false });
+            }
+          } else if (index0 != 0){
+            if (inverted){
+              stream_address[1].write({ address0, false });
+            } else {
+              stream_address[0].write({ address0, false });
+            }
+          } else if (index1 != 0){
+            if (inverted){
+              stream_address[1].write({ address1, false });
+            } else {
+              stream_address[0].write({ address1, false });
+            }
           }
-        } else if (index0 != 0){
-          if (inverted){
-            stream_address[1].write({ address0, false });
-          } else {
-            stream_address[0].write({ address0, false });
-          }
-        } else if (index1 != 0){
-          if (inverted){
-            stream_address[1].write({ address1, false });
-          } else {
-            stream_address[0].write({ address1, false });
+
+          if ((index0 != 0) ^ (index1 != 0)){
+            inverted = !inverted;
           }
         }
-
-        if ((index0 != 0) ^ (index1 != 0)){
-          inverted = !inverted;
-        }
+      }
     }
+    
     if (inverted){
       stream_address[1].write({ 0, true });
     } else {
@@ -742,7 +760,7 @@ readAndStreamEdgesPerBlock(row_t* edge_buf,
                   const unsigned char hash2_w,
                   const ap_uint<8> labelToTable[MAX_LABELS][MAX_LABELS],
                   const unsigned int numDataEdges,
-                  hls::stream<store_tuple_t<row_t> > stream_edge[2])
+                  hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2])
 {
     constexpr size_t COUNTERS_PER_BLOCK = 14;
     constexpr size_t SRC_NODE = 0;
@@ -753,87 +771,89 @@ readAndStreamEdgesPerBlock(row_t* edge_buf,
     bool inverted = false;
 
 STORE_EDGE_PER_BLOCK_LOOP:
-    for (auto s = 0; s < numDataEdges; s++) {
-#pragma HLS pipeline II = 1
-        row_t edge = edge_buf[s];
+    for (auto s_word = 0; s_word < (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD; s_word++) {
+#pragma HLS pipeline II = INSTR_PER_WORD
+        row_t packed_edge = edge_buf[s_word];
 
-        ap_uint<LAB_W> labeldst =
-          edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
-        ap_uint<LAB_W> labelsrc =
-          edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
-        ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
-        ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
+        for (int s_unpack = 0; s_unpack < INSTR_PER_WORD; s_unpack++) {
+#pragma HLS unroll
+          if ((s_word * INSTR_PER_WORD + s_unpack) < numDataEdges) {
+            ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (s_unpack + 1) - 1, INSTR_WIDTH * s_unpack);
 
-        // Retrieve index of table with source as indexing vertex
-        ap_uint<8> index0 = labelToTable[labelsrc][labeldst];
-        // Retrieve index of table with destination as indexing vertex
-        ap_uint<8> index1 = labelToTable[labeldst][labelsrc];
+            ap_uint<LAB_W> labeldst = edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
+            ap_uint<LAB_W> labelsrc = edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
+            ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
+            ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
 
-        /* Compute indices for hash table */
-        ap_uint<LKP3_HASH_W> hash_out0;
-        ap_uint<LKP3_HASH_W> hash_out1;
-        xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
+            // Retrieve index of table with source as indexing vertex
+            ap_uint<8> index0 = labelToTable[labelsrc][labeldst];
+            // Retrieve index of table with destination as indexing vertex
+            ap_uint<8> index1 = labelToTable[labeldst][labelsrc];
 
-        ap_uint<MAX_HASH_W> hashsrc = hash_out0.range(MAX_HASH_W - 1, 0);
-        hashsrc = hashsrc.range(hash1_w - 1, 0);
+            /* Compute indices for hash table */
+            ap_uint<LKP3_HASH_W> hash_out0;
+            ap_uint<LKP3_HASH_W> hash_out1;
+            xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
 
-        xf::database::details::hashlookup3_core<NODE_W>(nodedst, hash_out1);
+            ap_uint<MAX_HASH_W> hashsrc = hash_out0.range(MAX_HASH_W - 1, 0);
+            hashsrc = hashsrc.range(hash1_w - 1, 0);
 
-        ap_uint<MAX_HASH_W> hashdst = hash_out1.range(MAX_HASH_W - 1, 0);
-        hashdst = hashdst.range(hash1_w - 1, 0);
+            xf::database::details::hashlookup3_core<NODE_W>(nodedst, hash_out1);
 
-        /* Compute inside which block the edge will finish, in the meanwhile
-        also adjust the edge as indexing -> indexed, and also add the hash
-        values */
-        unsigned short address_intable0 =
-          hashsrc.range(hash1_w - 1, hash1_w - block_per_table);
-        unsigned int address0 =
-          ((index0 - 1) << block_per_table) + address_intable0;
-        unsigned short address_intable1 =
-          hashdst.range(hash1_w - 1, hash1_w - block_per_table);
-        unsigned int address1 =
-          ((index1 - 1) << block_per_table) + address_intable1;
+            ap_uint<MAX_HASH_W> hashdst = hash_out1.range(MAX_HASH_W - 1, 0);
+            hashdst = hashdst.range(hash1_w - 1, 0);
 
-        row_t table_edge0;
-        table_edge0.range(31, 0) = nodesrc;
-        table_edge0.range(63, 32) = nodedst;
-        table_edge0.range(95, 64) = hashsrc;
-        table_edge0.range(127, 96) = hashdst.range(hash2_w - 1, 0);
+            /* Compute inside which block the edge will finish, in the meanwhile
+            also adjust the edge as indexing -> indexed, and also add the hash
+            values */
+            unsigned short address_intable0 = hashsrc.range(hash1_w - 1, hash1_w - block_per_table);
+            unsigned int address0 = ((index0 - 1) << block_per_table) + address_intable0;
+            unsigned short address_intable1 = hashdst.range(hash1_w - 1, hash1_w - block_per_table);
+            unsigned int address1 = ((index1 - 1) << block_per_table) + address_intable1;
 
-        row_t table_edge1;
-        table_edge1.range(31, 0) = nodedst;
-        table_edge1.range(63, 32) = nodesrc;
-        table_edge1.range(95, 64) = hashdst;
-        table_edge1.range(127, 96) = hashsrc.range(hash2_w - 1, 0);
+            processed_edge_t table_edge0;
+            table_edge0.range(31, 0) = nodesrc;
+            table_edge0.range(63, 32) = nodedst;
+            table_edge0.range(95, 64) = hashsrc;
+            table_edge0.range(127, 96) = hashdst.range(hash2_w - 1, 0);
 
-        /* This useless if is to explain to Vitis HLS 2022.2 that two write in
-         * the same stream cannot happen in one cycle */
-        if (index0 != 0 && index1 != 0) {
-          if (inverted) {
-                stream_edge[1].write({ address0, table_edge0, false });
-                stream_edge[0].write({ address1, table_edge1, false });
-          } else {
-                stream_edge[0].write({ address0, table_edge0, false });
-                stream_edge[1].write({ address1, table_edge1, false });
+            processed_edge_t table_edge1;
+            table_edge1.range(31, 0) = nodedst;
+            table_edge1.range(63, 32) = nodesrc;
+            table_edge1.range(95, 64) = hashdst;
+            table_edge1.range(127, 96) = hashsrc.range(hash2_w - 1, 0);
+
+            /* This useless if is to explain to Vitis HLS 2022.2 that two write in
+            * the same stream cannot happen in one cycle */
+            if (index0 != 0 && index1 != 0) {
+              if (inverted) {
+                    stream_edge[1].write({ address0, table_edge0, false });
+                    stream_edge[0].write({ address1, table_edge1, false });
+              } else {
+                    stream_edge[0].write({ address0, table_edge0, false });
+                    stream_edge[1].write({ address1, table_edge1, false });
+              }
+            } else if (index0 != 0) {
+              if (inverted) {
+                    stream_edge[1].write({ address0, table_edge0, false });
+              } else {
+                    stream_edge[0].write({ address0, table_edge0, false });
+              }
+            } else if (index1 != 0) {
+              if (inverted) {
+                    stream_edge[1].write({ address1, table_edge1, false });
+              } else {
+                    stream_edge[0].write({ address1, table_edge1, false });
+              }
+            }
+
+            if ((index0 != 0) ^ (index1 != 0)) {
+              inverted = !inverted;
+            }
           }
-        } else if (index0 != 0) {
-          if (inverted) {
-                stream_edge[1].write({ address0, table_edge0, false });
-          } else {
-                stream_edge[0].write({ address0, table_edge0, false });
-          }
-        } else if (index1 != 0) {
-          if (inverted) {
-                stream_edge[1].write({ address1, table_edge1, false });
-          } else {
-                stream_edge[0].write({ address1, table_edge1, false });
-          }
-        }
-
-        if ((index0 != 0) ^ (index1 != 0)) {
-          inverted = !inverted;
         }
     }
+
     if (inverted) {
         stream_edge[1].write({ 0, 0, true });
     } else {
@@ -847,7 +867,7 @@ template<size_t NODE_W,
          size_t MAX_HASH_W,
          size_t MAX_LABELS>
 void
-storeEdgesPerBlock(hls::stream<store_tuple_t<row_t> > stream_edge[2],
+storeEdgesPerBlock(hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2],
                   row_t* m_axi,
                   unsigned int block_n_edges[4096])
 {
@@ -855,7 +875,7 @@ storeEdgesPerBlock(hls::stream<store_tuple_t<row_t> > stream_edge[2],
     unsigned int local_cache_address[BRAM_LAT];
     unsigned int local_cache_counter[BRAM_LAT];
     ap_uint<BRAM_LAT> local_cache_valid = 0;
-    store_tuple_t<row_t> tuple_in;
+    store_tuple_t<processed_edge_t> tuple_in;
     auto select = 0;
     
     tuple_in = stream_edge[select].read();
@@ -925,7 +945,7 @@ storeEdgePerBlockWrap(row_t* edge_buf,
                       unsigned int block_n_edges[4096])
 {
 #pragma HLS dataflow
-    hls::stream<store_tuple_t<row_t>, 30> stream_edge[2];
+    hls::stream<store_tuple_t<processed_edge_t>, 30> stream_edge[2];
 
     readAndStreamEdgesPerBlock<NODE_W,
                                LAB_W,

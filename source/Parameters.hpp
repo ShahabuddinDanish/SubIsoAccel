@@ -90,3 +90,9 @@ typedef ap_uint<VERTEX_WIDTH_BIT> vertex_t;
 
 // Useful typename for streams
 typedef ap_uint<(1UL << BLOOM_FILTER_WIDTH) * (1UL << K_FUNCTIONS)> bloom_flat_t;
+
+// Preprocessing Constants
+const int INSTR_WIDTH = 128; // fixed width of a single edge or vertex instruction 
+const int INSTR_PER_WORD_LOG = DDR_BIT - 7; // log2 of the number of instructions per 512-bit word (9-7=2 for 512-bit)
+const int INSTR_PER_WORD = 1 << INSTR_PER_WORD_LOG; // number of 128-bit instructions packed into a single row_t (4 for 512-bit)
+typedef ap_uint<INSTR_WIDTH> processed_edge_t; // dedicated type for the intermediate processed edge format
