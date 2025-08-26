@@ -101,7 +101,7 @@ EMCONFIG_DIR = $(TEMP_DIR)
 
 ############################## Build Rules ##############################
 
-.PHONY: all clean cleanall docs emconfig help host build xclbin run test check-platform check-device check-vitis check-xrt kernel_compile
+.PHONY: all clean cleanall docs emconfig help host build xclbin run test check-platform check-device check-vitis check-xrt kernel_compile csim
 
 # Default target
 all: check-platform check-device check-vitis $(EXECUTABLE) $(XCLBIN_FILE) emconfig
@@ -168,6 +168,11 @@ else
 	./$(EXECUTABLE) $(CMD_ARGS) $(EXTRA_ARGS)
 endif
 
+# Run HLS C-Simulation
+csim: check-vitis
+	$(ECHO) "Running HLS C-Simulation..."
+	vitis-run --mode hls --tcl run_csim.tcl
+
 ############################## Cleanup ##############################
 
 clean:
@@ -218,6 +223,9 @@ help:
 	$(ECHO) ""
 	$(ECHO) "  make test TARGET=<sw_emu/hw_emu/hw> PLATFORM=<FPGA platform> [EXTRA_ARGS=\"<host_app_args>\"]"
 	$(ECHO) "      Command to run the application for testing using the current build."
+	$(ECHO) ""
+	$(ECHO) "  make csim"
+	$(ECHO) "      Command to run HLS C-Simulation using the TCL script."
 	$(ECHO) ""
 	$(ECHO) "  make clean"
 	$(ECHO) "      Command to remove intermediate files."
