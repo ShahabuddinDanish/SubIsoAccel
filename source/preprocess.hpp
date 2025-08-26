@@ -1015,8 +1015,11 @@ void packAndStoreEdges(hls::stream<processed_edge_t>& stream_in,
     int pack_counter = 0;
     unsigned int write_address = 0;
 
+// The total number of edges to process is doubled for undirected graphs.
+const unsigned long total_edges_to_pack = numDataEdges * 2;
+
 PACK_LOOP:
-    for (int i = 0; i < numDataEdges; i++) {
+    for (int i = 0; i < total_edges_to_pack; i++) {
 #pragma HLS pipeline II=1
         
 #if DEBUG_INTERFACE
