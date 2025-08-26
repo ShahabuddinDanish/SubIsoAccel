@@ -1128,6 +1128,10 @@ blockToHTB(row_t* edge_buf,
 #pragma HLS bind_storage variable=block_counter0 type=RAM_2P impl=URAM
 #pragma HLS bind_storage variable=block_counter1 type=RAM_2P impl=URAM
 
+#if DEBUG_INTERFACE
+    hls::print("BLOCK_TO_HTB: Starting function.\n", 0);
+#endif
+
 /* Loop 2^(COUNTERS_PER_BLOCK - 2) since one block is split in two memories and
  * every memroy keep two counters per line*/
 INITIALIZE_URAM_LOOP:
@@ -1142,6 +1146,9 @@ INITIALIZE_URAM_LOOP:
     unsigned int base_address = 0;
 BLOCK_HTB_TOP_LOOP:
     for (auto s = 0; s < block_per_table * numTables; s++) {
+#if DEBUG_INTERFACE
+      hls::print("BLOCK_TO_HTB: TOP_LOOP, processing block s=%d\n", (unsigned int)s);
+#endif
         auto block_edges = block_n_edges[s] - prev_offset;
         auto ntb = s >> (hash1_w + hash2_w - COUNTERS_PER_BLOCK);
         if (prev_ntb != ntb){
@@ -1149,11 +1156,17 @@ BLOCK_HTB_TOP_LOOP:
         }
 
       const unsigned long num_block_words = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+#if DEBUG_INTERFACE
+      hls::print("BLOCK_TO_HTB: TOP_LOOP, block_edges=%d\n", (unsigned int)block_edges);
+      hls::print("BLOCK_TO_HTB: TOP_LOOP, num_block_words=%d\n", (unsigned int)num_block_words);
+#endif
 
 COUNT_EDGES_INSIDE_BLOCK_LOOP:
         for (auto g_word = 0; g_word < num_block_words; g_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
-
+#if DEBUG_INTERFACE 
+          hls::print("BLOCK_TO_HTB: COUNT_LOOP, reading word %d\n", (unsigned int)g_word);
+#endif
           row_t packed_edge = edge_buf[prev_offset + g_word];
 
           for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
@@ -1325,6 +1338,9 @@ STORE_OFFSETS_BLOCK_LOOP:
         prev_offset = block_n_edges[s];
         prev_ntb = ntb;
     }
+#if DEBUG_INTERFACE
+    hls::print("BLOCK_TO_HTB: Function finished.\n", 0);
+#endif
 }
 
 template<typename T_CNT,
