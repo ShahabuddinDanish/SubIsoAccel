@@ -1069,8 +1069,6 @@ blockToHTB(row_t* edge_buf,
 #pragma HLS bind_storage variable=block_counter0 type=RAM_2P impl=URAM
 #pragma HLS bind_storage variable=block_counter1 type=RAM_2P impl=URAM
 
-    ap_uint<64> *htb_p0 = (ap_uint<64> *)htb_buf;
-
 /* Loop 2^(COUNTERS_PER_BLOCK - 2) since one block is split in two memories and
  * every memroy keep two counters per line*/
 INITIALIZE_URAM_LOOP:
@@ -1091,53 +1089,61 @@ BLOCK_HTB_TOP_LOOP:
             base_address = 0;
         }
 
+      const unsigned long num_block_words = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+
 COUNT_EDGES_INSIDE_BLOCK_LOOP:
-        for (auto g = 0; g < block_edges; g++) {
-#pragma HLS pipeline II = 2
-            row_t edge = edge_buf[g + prev_offset];
+        for (auto g_word = 0; g_word < num_block_words; g_word++) {
+#pragma HLS pipeline II = INSTR_PER_WORD
 
-            ap_uint<NODE_W> indexing_hash =
-              edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
-            ap_uint<NODE_W> indexed_hash =
-              edge.range(IXD_HASH + NODE_W - 1, IXD_HASH);
+          row_t packed_edge = edge_buf[prev_offset + g_word];
 
-            /* Computing the bucket in which the edge will be stored, 
-            restricted to the block of counter in memory */
-            ap_uint<COUNTERS_PER_BLOCK> address = indexing_hash;
-            address <<= hash2_w;
-            address += indexed_hash;
-            ap_uint<64> row_counter0;
-            ap_uint<64> row_counter1;
-            ap_uint<64> row_counter;
+          for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
+#pragma HLS unroll
+            if ((g_word * INSTR_PER_WORD + g_unpack) < block_edges) {
+              ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (g_unpack+1) - 1, INSTR_WIDTH * g_unpack);
 
-            /* The first bit select which counter in the 64-bit word, the second
-             * one select on which memory read. In this way counters are
-             * consecutive inside a word */
-            row_counter1 = block_counter1[(address >> 2)];
-            row_counter0 = block_counter0[(address >> 2)];
+              ap_uint<NODE_W> indexing_hash = edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
+              ap_uint<NODE_W> indexed_hash =  edge.range(IXD_HASH + NODE_W - 1, IXD_HASH);
 
-            if (address.test(1)){
-                row_counter = row_counter1;
-            } else {
-                row_counter = row_counter0;
+              /* Computing the bucket in which the edge will be stored, 
+              restricted to the block of counter in memory */
+              ap_uint<COUNTERS_PER_BLOCK> address = indexing_hash;
+              address <<= hash2_w;
+              address += indexed_hash;
+              ap_uint<64> row_counter0;
+              ap_uint<64> row_counter1;
+              ap_uint<64> row_counter;
+
+              /* The first bit select which counter in the 64-bit word, the second
+              * one select on which memory read. In this way counters are
+              * consecutive inside a word */
+              row_counter1 = block_counter1[(address >> 2)];
+              row_counter0 = block_counter0[(address >> 2)];
+
+              if (address.test(1)){
+                  row_counter = row_counter1;
+              } else {
+                  row_counter = row_counter0;
+              }
+
+              if (address.test(0)){
+                  ap_uint<32> counter = row_counter.range(63, 32);
+                  row_counter.range(63, 32) = counter + 1;
+              } else {
+                  ap_uint<32> counter = row_counter.range(31, 0);
+                  row_counter.range(31, 0) = counter + 1;
+              }
+
+              if (address.test(1)){
+                  row_counter1 = row_counter;
+              } else {
+                  row_counter0 = row_counter;
+              }
+
+              block_counter1[(address >> 2)] = row_counter1;
+              block_counter0[(address >> 2)] = row_counter0;
             }
-
-            if (address.test(0)){
-                ap_uint<32> counter = row_counter.range(63, 32);
-                row_counter.range(63, 32) = counter + 1;
-            } else {
-                ap_uint<32> counter = row_counter.range(31, 0);
-                row_counter.range(31, 0) = counter + 1;
-            }
-
-            if (address.test(1)){
-                row_counter1 = row_counter;
-            } else {
-                row_counter0 = row_counter;
-            }
-
-            block_counter1[(address >> 2)] = row_counter1;
-            block_counter0[(address >> 2)] = row_counter0;
+          }
         }
 
 COUNTERS_TO_OFFSETS_URAM_LOOP:
@@ -1159,73 +1165,103 @@ COUNTERS_TO_OFFSETS_URAM_LOOP:
             block_counter1[g] = offset1;
         }
 
+        const unsigned long num_block_words_store = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+
 STORE_EDGES_INSIDE_BLOCK_LOOP:
-        for (auto g = 0; g < block_edges; g++) {
-#pragma HLS pipeline II = 2
-            row_t edge = edge_buf[g + prev_offset];
-            
-            ap_uint<NODE_W> indexing_hash =
-              edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
-            ap_uint<NODE_W> indexed_hash =
-              edge.range(IXD_HASH + NODE_W - 1, IXD_HASH);
-            ap_uint<NODE_W> indexed_node =
-              edge.range(IXD_NODE + NODE_W - 1, IXD_NODE);
-            ap_uint<NODE_W> indexing_node =
-              edge.range(IXG_NODE + NODE_W - 1, IXG_NODE);
+        for (auto g_word = 0; g_word < num_block_words_store; g_word++) {
+#pragma HLS pipeline II = INSTR_PER_WORD
+          row_t packed_edge = edge_buf[prev_offset + g_word];
 
-            /* Computing the bucket in which the edge will be stored, 
-            restricted to the block of offset in memory */
-            ap_uint<COUNTERS_PER_BLOCK> address = indexing_hash;
-            address <<= hash2_w;
-            address += indexed_hash;
-            ap_uint<64> row_offset0;
-            ap_uint<64> row_offset1;
-            ap_uint<64> row_offset;
-            ap_uint<32>  offset;
-            
-            /* The first bit select which offset in the 64-bit word, the second
-             * one select on which memory read. In this way OFFSETS are
-             * consecutive inside a word */
-            row_offset1 = block_counter1[(address >> 2)];
-            row_offset0 = block_counter0[(address >> 2)];
+          for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
+#pragma HLS unroll
+            if ((g_word * INSTR_PER_WORD + g_unpack) < block_edges) {
+              ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (g_unpack+1) - 1, INSTR_WIDTH * g_unpack);
 
-            if (address.test(1)){
-                row_offset = row_offset1;
-            } else {
-                row_offset = row_offset0;
+              ap_uint<NODE_W> indexing_hash = edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
+              ap_uint<NODE_W> indexed_hash = edge.range(IXD_HASH + NODE_W - 1, IXD_HASH);
+              ap_uint<NODE_W> indexed_node = edge.range(IXD_NODE + NODE_W - 1, IXD_NODE);
+              ap_uint<NODE_W> indexing_node = edge.range(IXG_NODE + NODE_W - 1, IXG_NODE);
+
+              /* Computing the bucket in which the edge will be stored, 
+              restricted to the block of offset in memory */
+              ap_uint<COUNTERS_PER_BLOCK> address = indexing_hash;
+              address <<= hash2_w;
+              address += indexed_hash;
+              ap_uint<64> row_offset0;
+              ap_uint<64> row_offset1;
+              ap_uint<64> row_offset;
+              ap_uint<32>  offset;
+              
+              /* The first bit select which offset in the 64-bit word, the second
+              * one select on which memory read. In this way OFFSETS are
+              * consecutive inside a word */
+              row_offset1 = block_counter1[(address >> 2)];
+              row_offset0 = block_counter0[(address >> 2)];
+
+              if (address.test(1)){
+                  row_offset = row_offset1;
+              } else {
+                  row_offset = row_offset0;
+              }
+
+              if (address.test(0)){
+                  offset = row_offset.range(63, 32);
+                  row_offset.range(63, 32) = offset + 1;
+              } else {
+                  offset = row_offset.range(31, 0);
+                  row_offset.range(31, 0) = offset + 1;
+              }
+
+              if (address.test(1)){
+                  row_offset1 = row_offset;
+              } else {
+                  row_offset0 = row_offset;
+              }
+
+              block_counter1[(address >> 2)] = row_offset1;
+              block_counter0[(address >> 2)] = row_offset0;
+
+              const int EDGES_PER_512_WORD = DDR_WORD / 64; // Should be 8 at 512 bits
+              ap_uint<32> edge_64bit_index = (hTables[ntb].start_edges << 1) + offset;
+
+              // Calculate the 512-bit word address and the 64-bit slot within it
+              ap_uint<32> word_addr = edge_64bit_index / EDGES_PER_512_WORD;
+              ap_uint<32> slot_index = edge_64bit_index % EDGES_PER_512_WORD;
+
+              // Perform the read-modify-write
+              row_t temp_word = htb_buf[word_addr];
+              temp_word.range(64 * (slot_index + 1) - 1, 64 * slot_index) = indexing_node.concat(indexed_node);
+              htb_buf[word_addr] = temp_word;
             }
-
-            if (address.test(0)){
-                offset = row_offset.range(63, 32);
-                row_offset.range(63, 32) = offset + 1;
-            } else {
-                offset = row_offset.range(31, 0);
-                row_offset.range(31, 0) = offset + 1;
-            }
-
-            if (address.test(1)){
-                row_offset1 = row_offset;
-            } else {
-                row_offset0 = row_offset;
-            }
-
-            block_counter1[(address >> 2)] = row_offset1;
-            block_counter0[(address >> 2)] = row_offset0;
-            
-            ap_uint<32> addr_row_offset = (hTables[ntb].start_edges << 1) + offset;
-            htb_p0[addr_row_offset] = indexing_node.concat(indexed_node);
+          }
         }
 
         /* Store the block counters, packing them in a row */
-        row_t row;
+        const int COUNTER_WORDS_PER_512 = 4; // 4 * 128-bit words in a 512-bit word
+        const int NUM_COUNTER_WORDS = (1UL << (COUNTERS_PER_BLOCK - 2));        
+        row_t packed_counters;
+
 STORE_OFFSETS_BLOCK_LOOP:
-        for (auto g = 0; g < (1UL << (COUNTERS_PER_BLOCK - 2)); g++) {
-#pragma HLS pipeline II = 1
-            row.range(63, 0) = block_counter0[g];
-            row.range(127, 64) = block_counter1[g];
+        for (auto g = 0; g < NUM_COUNTER_WORDS; g++) {
+#pragma HLS pipeline II=1
+            int slot = g % COUNTER_WORDS_PER_512;
+
+            // Pack two 64-bit counters into one 128-bit chunk
+            ap_uint<128> counter_chunk;
+            counter_chunk.range(63, 0)   = block_counter0[g];
+            counter_chunk.range(127, 64) = block_counter1[g];
+
+            // Place the 128-bit chunk into the 512-bit buffer
+            packed_counters.range(128 * (slot + 1) - 1, 128 * slot) = counter_chunk;
+
             block_counter0[g] = 0;
             block_counter1[g] = 0;
-            htb_buf[g + (s * (1UL << (COUNTERS_PER_BLOCK - 2)))] = row;
+    
+            // Write to memory when the buffer is full or on the last element
+            if (slot == (COUNTER_WORDS_PER_512 - 1) || g == (NUM_COUNTER_WORDS - 1)) {
+                int word_addr = g / COUNTER_WORDS_PER_512;
+                htb_buf[word_addr + (s * (NUM_COUNTER_WORDS / COUNTER_WORDS_PER_512))] = packed_counters;
+            }
         }
         prev_offset = block_n_edges[s];
         prev_ntb = ntb;
