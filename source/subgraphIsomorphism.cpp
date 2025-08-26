@@ -377,7 +377,16 @@ mwj_propose(hls::stream<ap_uint<V_ID_W>>& stream_fifo_in,
    * changed vertex.
    * STOP_NODE stops the entire pipeline.
    * FAKE_NODE used in case of radix without extension: single node solutions */
+#if DEBUG_INTERFACE
+  hls::print("PROPOSE ENTER: %d\n", 101); // Unique ID for entering this function's loop
+#endif
+
   vertex_read = stream_fifo_in.read();
+
+#if DEBUG_INTERFACE
+  hls::print("PROPOSE: Read 0x%x\n", (unsigned int)vertex_read);
+#endif
+
   if (vertex_read == FAKE_NODE) {
     n_nodes = 0;
   } else {
@@ -386,8 +395,13 @@ mwj_propose(hls::stream<ap_uint<V_ID_W>>& stream_fifo_in,
     vertex.node = vertex_read & MASK_RADIX;
     vertex.last = !radix || (vertex_read == STOP_NODE);
     vertex.stop = (vertex_read == STOP_NODE);
-    if (radix)
+    if (radix) {
       n_nodes++;
+    }
+#if DEBUG_INTERFACE
+    hls::print("PROPOSE: About to write node %d\n", (unsigned int)vertex.node);
+    hls::print("PROPOSE: About to write node at pos=%d\n", (unsigned int)vertex.pos);
+#endif
     stream_sol_out.write(vertex);
   }
 }
@@ -419,9 +433,25 @@ EDGEBUILD_TASK_LOOP:
   while (true) {
 #pragma HLS pipeline II = 1 style = flp
 
+#if DEBUG_INTERFACE
+    hls::print("EDGEBUILD ENTER: %d\n", 201); // Unique ID for this loop
+#endif
+
     if (state == streaming_sol) {
       sol_node_t<vertex_t> vertex = stream_sol_in.read();
+      
+#if DEBUG_INTERFACE
+      hls::print("EDGEBUILD: Read solution node %d\n", (unsigned int)vertex.node);
+      hls::print("EDGEBUILD: Read solution pos %d\n", (unsigned int)vertex.pos);
+#endif
+
       curEmb[vertex.pos] = vertex.node;
+
+#if DEBUG_INTERFACE
+      hls::print("EDGEBUILD: About to write solution node %d\n", (unsigned int)vertex.node);
+      hls::print("EDGEBUILD: About to write solution pos %d\n", (unsigned int)vertex.pos);
+#endif
+
       stream_sol_out.write(vertex);
       curQV = vertex.pos + 1;
       table_pointer = 0;
@@ -441,18 +471,23 @@ EDGEBUILD_TASK_LOOP:
       tuple_out.tb_index = tb_index;
       tuple_out.reset = false;
       tuple_out.num_tb_indexed = qVertices[curQV].numTablesIndexed;
-      tuple_out.last =
-        (table_pointer == (qVertices[curQV].numTablesIndexed - 1));
+      tuple_out.last = (table_pointer == (qVertices[curQV].numTablesIndexed - 1));
+#if DEBUG_INTERFACE
+      hls::print("EDGEBUILD: About to write tuple for table index=%d\n", (unsigned int)tuple_out.tb_index);
+#endif
       stream_tuple_out.write(tuple_out);
       if (table_pointer == qVertices[curQV].numTablesIndexed - 1) {
         state = reset;
       }
       table_pointer++;
-    } else {
+    } else {  // reset state
       findmin_tuple_t tuple_out;
       tuple_out.reset = true;
       tuple_out.last = false;
       tuple_out.stop = false;
+#if DEBUG_INTERFACE
+      hls::print("EDGEBUILD: About to write RESET tuple\n", 0); // 0 is a print dummy value
+#endif
       stream_tuple_out.write(tuple_out);
       state = streaming_sol;
     }
@@ -492,8 +527,21 @@ void mwj_findmin(row_t* bloom_p,
 FINDMIN_TASK_LOOP:
   while (true) {
 #pragma HLS pipeline II = 4 style = flp
-    
+
+#if DEBUG_INTERFACE
+    hls::print("FINDMIN ENTER: %d\n", 301); // Unique ID for this loop
+#endif
+
     tuple_in = stream_tuple_in.read();
+
+#if DEBUG_INTERFACE
+    if(tuple_in.reset) {
+      hls::print("FINDMIN: Read RESET tuple\n", 0);
+    } else {
+      hls::print("FINDMIN: Read tuple for table index %d\n", (unsigned int)tuple_in.tb_index);
+    }
+#endif
+
     unsigned short bloom_s = 0;
 
     if (tuple_in.stop) {
