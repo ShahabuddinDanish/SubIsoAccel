@@ -59,7 +59,7 @@ struct host_uint512_t {
 };
 
 typedef host_uint512_t row_t;
-typedef host_uint128_t bloom_t;
+//typedef host_uint128_t bloom_t;
 
 // Parameter definitions
 
@@ -82,7 +82,9 @@ typedef host_uint128_t bloom_t;
 
 #define HASHTABLES_SPACE    ((1UL << 28) / (DDR_WORD / 8))  //~ 256 MB
 #define BLOOM_SPACE         ((1UL << 27) / (DDR_WORD / 8))  //~ 128 MB
-#define RESULTS_SPACE		(DYN_FIFO_BURST * (1UL << 21))  //~ 1 << 30, 1024 MB
+#define RESULTS_SPACE		((DYN_FIFO_BURST * (1UL << 21)) / INSTR_PER_WORD)  //~ 1 << 30, 1024 MB
+
+const int INSTR_PER_WORD = 4;   // 4 * 128-bit instructions in one 512-bit word
 
 struct edge_t {
     uint32_t src;
@@ -351,15 +353,13 @@ std::pair<int, int> load_querygraphs(
         memcpy( ((char*)&temp_word) + (pack_counter * sizeof(edge_t)), 
                 &edge, 
                 sizeof(edge_t) );
-        
         pack_counter++;
 
-        if (pack_counter == 4) {
+        if (pack_counter == INSTR_PER_WORD) {
             memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
             pack_counter = 0;
             memset(&temp_word, 0, sizeof(row_t));
         }
-
     }
     std::cout << "]" << std::endl;
     
@@ -376,10 +376,9 @@ std::pair<int, int> load_querygraphs(
         memcpy( ((char*)&temp_word) + (pack_counter * sizeof(edge_t)), 
                 &edge, 
                 sizeof(edge_t) );
-        
         pack_counter++;
 
-        if (pack_counter == 4) {
+        if (pack_counter == INSTR_PER_WORD) {
             memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
             pack_counter = 0;
             memset(&temp_word, 0, sizeof(row_t));
