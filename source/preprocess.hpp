@@ -945,6 +945,59 @@ STORE_EDGES_PER_BLOCK_LOOP:
         assert(local_value_counter < UINT32_MAX);
 #endif
     }
+#if DEBUG_INTERFACE
+    hls::print("STORE_EDGES: Loop finished.\n", 0);
+#endif
+}
+
+/* Handles packing and writing to memory */
+void packAndStoreEdges(hls::stream<processed_edge_t>& stream_in, 
+                       row_t* m_axi, 
+                       const unsigned long numDataEdges) 
+{
+    row_t packing_buffer;
+    int pack_counter = 0;
+    unsigned int write_address = 0;
+
+PACK_LOOP:
+    for (int i = 0; i < numDataEdges; i++) {
+#pragma HLS pipeline II=1
+        
+#if DEBUG_INTERFACE
+        hls::print("PACK_AND_STORE_EDGES: Waiting to read edge %d\n", (unsigned int)i);
+#endif
+
+        // Read the next 128-bit processed edge from the stream.
+        processed_edge_t edge = stream_in.read();
+
+#if DEBUG_INTERFACE
+        hls::print("PACK_AND_STORE_EDGES: Read successful.\n", 0);
+#endif
+
+        // Place the edge into the correct slot in 512-bit buffer
+        packing_buffer.range(INSTR_WIDTH * (pack_counter + 1) - 1, INSTR_WIDTH * pack_counter) = edge;
+        pack_counter++;
+        
+        // If the buffer is full, write it to DDR and reset.
+        if (pack_counter == INSTR_PER_WORD) {
+#if DEBUG_INTERFACE
+            hls::print("PACK_EDGES: Writing full 512-bit word to address %d\n", write_address);
+#endif
+            m_axi[write_address] = packing_buffer;
+            write_address++;
+            pack_counter = 0;
+        }
+    }
+    
+    // After the loop, write remaining partial data
+    if (pack_counter > 0) {
+        // Zero out the rest of the buffer
+        for (int i = pack_counter; i < INSTR_PER_WORD; ++i) {
+#pragma HLS unroll
+            packing_buffer.range(INSTR_WIDTH * (i + 1) - 1, INSTR_WIDTH * i) = 0;
+        }
+        m_axi[write_address] = packing_buffer;
+    }
 }
 
 template<size_t NODE_W,
@@ -980,8 +1033,13 @@ storeEdgePerBlockWrap(row_t* edge_buf,
                                            numDataEdges,
                                            stream_edge);
 
+    // Writes to sorted_edge_stream instead of DDR
     storeEdgesPerBlock<NODE_W, LAB_W, LKP3_HASH_W, MAX_HASH_W, MAX_LABELS>(
-      stream_edge, block_buf, block_n_edges);
+        stream_edge, sorted_edge_stream, block_n_edges
+    );
+
+    // Reads from stream and writes packed data to DDR
+    packAndStoreEdges(sorted_edge_stream, block_buf, numDataEdges);
 }
 
 template<size_t NODE_W,
