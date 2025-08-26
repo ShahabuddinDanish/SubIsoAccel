@@ -566,8 +566,7 @@ template<size_t NODE_W,
          size_t LKP3_HASH_W,
          size_t MAX_HASH_W,
          size_t MAX_LABELS>
-void
-readEdgesPerBlock(row_t* edge_buf,
+void readEdgesPerBlock(row_t* edge_buf,
                   const unsigned char hash1_w,
                   const unsigned char hash2_w,
                   const ap_uint<8> labelToTable[MAX_LABELS][MAX_LABELS],
@@ -580,16 +579,21 @@ readEdgesPerBlock(row_t* edge_buf,
     constexpr size_t LABELSRC_NODE = 64;
     constexpr size_t LABELDST_NODE = 96;
     const unsigned int block_per_table = hash1_w + hash2_w - COUNTERS_PER_BLOCK;
+    const unsigned long num_data_words = (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
     bool inverted = false;
 
 READ_EDGES_PER_BLOCK_LOOP:
-    for (auto s_word = 0; s_word < (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD; s_word++) {
+    for (auto s_word = 0; s_word < num_data_words; s_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
       row_t packed_edge = edge_buf[s_word]; // Read one 512-bit word
 
+      // Inner loop unpacks 128-bit instructions from the word
       for (int s_unpack = 0; s_unpack < INSTR_PER_WORD; s_unpack++) {
 #pragma HLS unroll
+        // Boundary check to avoid processing padding data in the last word
         if ((s_word * INSTR_PER_WORD + s_unpack) < numDataEdges) {
+
+          // Extract the 128-bit logical instruction
           ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (s_unpack + 1) - 1, INSTR_WIDTH * s_unpack);
 
           ap_uint<LAB_W> labeldst = edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
@@ -605,13 +609,12 @@ READ_EDGES_PER_BLOCK_LOOP:
           /* Compute indices for hash table */
           ap_uint<LKP3_HASH_W> hash_out0;
           ap_uint<LKP3_HASH_W> hash_out1;
-          xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
 
+          xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
           ap_uint<MAX_HASH_W> hashsrc = hash_out0.range(MAX_HASH_W - 1, 0);
           hashsrc = hashsrc.range(hash1_w - 1, 0);
 
           xf::database::details::hashlookup3_core<NODE_W>(nodedst, hash_out1);
-
           ap_uint<MAX_HASH_W> hashdst = hash_out1.range(MAX_HASH_W - 1, 0);
           hashdst = hashdst.range(hash1_w - 1, 0);
 
@@ -775,16 +778,24 @@ readAndStreamEdgesPerBlock(row_t* edge_buf,
     constexpr size_t LABELSRC_NODE = 64;
     constexpr size_t LABELDST_NODE = 96;
     const unsigned int block_per_table = hash1_w + hash2_w - COUNTERS_PER_BLOCK;
+    const unsigned long num_data_words = (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
     bool inverted = false;
 
 STORE_EDGE_PER_BLOCK_LOOP:
-    for (auto s_word = 0; s_word < (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD; s_word++) {
+    // Outer loop iterates over 512-bit memory words
+    for (auto s_word = 0; s_word < num_data_words; s_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
-        row_t packed_edge = edge_buf[s_word];
 
+        row_t packed_edge = edge_buf[s_word]; // Read one 512-bit word
+
+        // Inner loop unpacks 128-bit instructions from the memory word
         for (int s_unpack = 0; s_unpack < INSTR_PER_WORD; s_unpack++) {
 #pragma HLS unroll
+
+          // Boundary check to avoid processing padding data
           if ((s_word * INSTR_PER_WORD + s_unpack) < numDataEdges) {
+
+            // Extract the 128-bit logical instruction
             ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (s_unpack + 1) - 1, INSTR_WIDTH * s_unpack);
 
             ap_uint<LAB_W> labeldst = edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
@@ -800,13 +811,12 @@ STORE_EDGE_PER_BLOCK_LOOP:
             /* Compute indices for hash table */
             ap_uint<LKP3_HASH_W> hash_out0;
             ap_uint<LKP3_HASH_W> hash_out1;
-            xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
 
+            xf::database::details::hashlookup3_core<NODE_W>(nodesrc, hash_out0);
             ap_uint<MAX_HASH_W> hashsrc = hash_out0.range(MAX_HASH_W - 1, 0);
             hashsrc = hashsrc.range(hash1_w - 1, 0);
 
             xf::database::details::hashlookup3_core<NODE_W>(nodedst, hash_out1);
-
             ap_uint<MAX_HASH_W> hashdst = hash_out1.range(MAX_HASH_W - 1, 0);
             hashdst = hashdst.range(hash1_w - 1, 0);
 
@@ -875,7 +885,7 @@ template<size_t NODE_W,
          size_t MAX_LABELS>
 void
 storeEdgesPerBlock(hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2],
-                  row_t* m_axi,
+                  hls::stream<processed_edge_t>& stream_out,
                   unsigned int block_n_edges[4096])
 {
     const size_t BRAM_LAT = 3;
@@ -952,7 +962,12 @@ storeEdgePerBlockWrap(row_t* edge_buf,
                       unsigned int block_n_edges[4096])
 {
 #pragma HLS dataflow
+
+    // Stream for raw edges with hashes
     hls::stream<store_tuple_t<processed_edge_t>, 30> stream_edge[2];
+
+    // Intermediate stream for sorted, ready-to-pack edges
+    hls::stream<processed_edge_t, 32> sorted_edge_stream;
 
     readAndStreamEdgesPerBlock<NODE_W,
                                LAB_W,
@@ -990,8 +1005,7 @@ blockToHTB(row_t* edge_buf,
     constexpr size_t IXD_NODE = 32;
     constexpr size_t IXG_HASH = 64;
     constexpr size_t IXD_HASH = 96;
-    const unsigned int block_per_table =
-      (1UL << (hash1_w + hash2_w - COUNTERS_PER_BLOCK));
+    const unsigned int block_per_table = (1UL << (hash1_w + hash2_w - COUNTERS_PER_BLOCK));
     ap_uint<64> block_counter0[4096];
     ap_uint<64> block_counter1[4096];
 #pragma HLS bind_storage variable=block_counter0 type=RAM_2P impl=URAM
