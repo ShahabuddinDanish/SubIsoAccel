@@ -582,9 +582,16 @@ void readEdgesPerBlock(row_t* edge_buf,
     const unsigned long num_data_words = (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
     bool inverted = false;
 
+#if DEBUG_INTERFACE
+    hls::print("PREPROC-READ_EDGES_PER_BLOCK_LOOP Starting. Will read %d words.\n", (unsigned int)num_data_words);
+#endif
+
 READ_EDGES_PER_BLOCK_LOOP:
     for (auto s_word = 0; s_word < num_data_words; s_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
+#if DEBUG_INTERFACE
+      hls::print("PREPROC-READ_EDGES_PER_BLOCK_LOOP: Reading word %d\n", (unsigned int)s_word);
+#endif
       row_t packed_edge = edge_buf[s_word]; // Read one 512-bit word
 
       // Inner loop unpacks 128-bit instructions from the word
@@ -679,9 +686,21 @@ countEdgesPerBlock(hls::stream<counter_tuple_t> stream_address[2],
     ap_uint<BRAM_LAT> local_cache_valid = 0;
     counter_tuple_t tuple_in;
     auto select = 0;
-    
+
+#if DEBUG_INTERFACE
+    hls::print("PREPROC-COUNT_EDGES_PER_BLOCK: Starting to read from stream %d\n", (unsigned int)select);
+    hls::print("PREPROC-COUNT_EDGES_PER_BLOCK: Waiting for first tuple.\n", 0);
+#endif
+
     tuple_in = stream_address[select].read();
+
+#if DEBUG_INTERFACE
+    hls::print("PREPROC-COUNT_EDGES_PER_BLOCK: Received first tuple.\n", 0);
+    hls::print("PREPROC-COUNT_EDGES_PER_BLOCK: Read successful. Stop=%d\n", (unsigned int)tuple_in.stop);
+#endif
+
     select = (select + 1) % 2;
+
 COUNT_EDGES_PER_BLOCK_LOOP:
     while (!tuple_in.stop) {
 #pragma HLS dependence variable = block_n_edges type = inter direction =       \
@@ -689,6 +708,10 @@ COUNT_EDGES_PER_BLOCK_LOOP:
 #pragma HLS pipeline II = 1
 
         unsigned int address = tuple_in.address;
+
+#if DEBUG_INTERFACE
+        hls::print("PREPROC-COUNT_EDGES_PER_BLOCK_LOOP: Processing address %d\n", (unsigned int)address);
+#endif
 
         bool hit = false;
         unsigned int local_value_counter = 0;
@@ -726,15 +749,28 @@ COUNT_EDGES_PER_BLOCK_LOOP:
         local_cache_valid[0] = true;
         block_n_edges[address] = local_value_counter;
 
+#if DEBUG_INTERFACE
+        hls::print("PREPROC-COUNT_EDGES_PER_BLOCK_LOOP: Starting to read from stream %d\n", (unsigned int)select);
+#endif
+
         tuple_in = stream_address[select].read();
+
+#if DEBUG_INTERFACE
+        hls::print("PREPROC-COUNT_EDGES_PER_BLOCK_LOOP: Read successful. Stop=%d\n", (unsigned int)tuple_in.stop);
+#endif
+
         select = (select + 1) % 2;
 
 #ifndef __SYNTHESIS__
         assert(local_value_counter < UINT32_MAX);
 #endif
     }
-}
 
+#if DEBUG_INTERFACE
+    hls::print("PREPROC-COUNT_EDGES_PER_BLOCK: Loop finished. Final tuple stop flag was %d\n", (unsigned int)tuple_in.stop);
+#endif
+
+}
 
 template<size_t NODE_W,
          size_t LAB_W,
@@ -894,8 +930,19 @@ storeEdgesPerBlock(hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2],
     ap_uint<BRAM_LAT> local_cache_valid = 0;
     store_tuple_t<processed_edge_t> tuple_in;
     auto select = 0;
-    
+
+#if DEBUG_INTERFACE
+    hls::print("PREPROC-STORE_EDGES_PER_BLOCK: Starting to read from stream %d\n", (unsigned int)select);
+    hls::print("PREPROC-STORE_EDGES_PER_BLOCK: Waiting for first tuple.\n", 0);
+#endif
+
     tuple_in = stream_edge[select].read();
+
+#if DEBUG_INTERFACE
+    hls::print("PREPROC-STORE_EDGES_PER_BLOCK: Received first tuple.\n", 0);
+    hls::print("PREPROC-STORE_EDGES_PER_BLOCK: Read successful. Stop=%d\n", (unsigned int)tuple_in.stop);
+#endif
+
     select = (select + 1) % 2;
 STORE_EDGES_PER_BLOCK_LOOP:
     while (!tuple_in.stop) {
@@ -937,8 +984,17 @@ STORE_EDGES_PER_BLOCK_LOOP:
         local_cache_counter[0] = local_value_counter + 1;
         local_cache_valid[0] = true;
         block_n_edges[address] = local_value_counter + 1;
-        m_axi[local_value_counter] = tuple_in.edge;
+        stream_out.write(tuple_in.edge);
+
+#if DEBUG_INTERFACE        
+        hls::print("STORE_EDGES: Wrote edge for block %d\n", (unsigned int)tuple_in.address);
+        hls::print("STORE_EDGES: About to read from stream %d\n", (unsigned int)select);
+#endif
+
         tuple_in = stream_edge[select].read();
+#if DEBUG_INTERFACE        
+        hls::print("STORE_EDGES: Read successful. Stop=%d\n", (unsigned int)tuple_in.stop);
+#endif
         select = (select + 1) % 2;
 
 #ifndef __SYNTHESIS__
