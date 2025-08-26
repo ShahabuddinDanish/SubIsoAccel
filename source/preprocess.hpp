@@ -351,11 +351,18 @@ void bagtoset(hls::stream<bagtoset_tuple_t<NODE_W> > &stream_tuple_in,
   ap_uint<MAX_CL> valid_bits = 0; // 1 if the element is present
   ap_uint<MAX_CL> equal_bits = 0; // 1 if the element is equal to the one in the bag
 
+#if DEBUG_INTERFACE
+  hls::print("BAGTOSET: Starting, waiting for data.\n", 0);
+#endif
+
 BAGTOSET_TASK_LOOP:
-  do
-  {
+  do {
 #pragma HLS pipeline II = 2
     tuple_in = stream_tuple_in.read();
+
+#if DEBUG_INTERFACE
+    hls::print("BAGTOSET: Read a tuple.\n", 0);
+#endif
 
     if (tuple_in.valid)
     {
@@ -368,14 +375,16 @@ BAGTOSET_TASK_LOOP:
 
       // If the element is not present in the set, add it
       // and write it to the output stream
-      if ((equal_bits & valid_bits) == 0)
-      {
+      if ((equal_bits & valid_bits) == 0) {
         set[pointer] = tuple_in.indexing_v;
         valid_bits = valid_bits | (1 << pointer);
         pointer++;
         batch_tuple_t<NODE_W> tuple_out;
         tuple_out.indexing_v = tuple_in.indexing_v;
         tuple_out.last = false;
+#if DEBUG_INTERFACE
+        hls::print("BAGTOSET: Found unique vertex %d, writing downstream.\n", (unsigned int)tuple_in.indexing_v);
+#endif
         stream_tuple_out.write(tuple_out);
       }
 
@@ -393,6 +402,9 @@ BAGTOSET_TASK_LOOP:
   tuple_out.indexing_v = tuple_in.indexing_v;
   tuple_out.last = true;
   stream_tuple_out.write(tuple_out);
+#if DEBUG_INTERFACE
+  hls::print("BAGTOSET: Finished.\n", 0);
+#endif
 }
 
 template <size_t NODE_LOG,
