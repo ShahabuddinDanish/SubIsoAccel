@@ -247,9 +247,17 @@ PROPOSE_TBINDEXING_LOOP:
     }
   }
 
+#if DEBUG_INTERFACE
+  hls::print("BLOOM_READ: Starting.\n", 0);
+#endif
+
 BLOOM_READ_TASK_LOOP:
   for (unsigned int ntb = 0; ntb < numTables; ntb++)
   {
+
+    #if DEBUG_INTERFACE
+      hls::print("BLOOM_READ: Processing table %d\n", ntb);
+    #endif
 
     /* During first iteration do not consider the difference between
     prev_indexing_h and indexing_h to be useful to write the bloom */
@@ -400,7 +408,15 @@ void batch(unsigned int &n_candidate,
   ap_uint<32> pointer = 0;
   unsigned int offset = 0;
 
+#if DEBUG_INTERFACE
+  hls::print("BATCH: Starting. Writing to address %d\n", start_address);
+#endif
+
   batch_tuple_t<NODE_W> tuple_in = stream_tuple_in.read();
+
+#if DEBUG_INTERFACE
+  hls::print("BATCH: Read first tuple.\n", 0);
+#endif
   while (!tuple_in.last)
   {
 #pragma HLS pipeline II = 1
@@ -411,11 +427,20 @@ void batch(unsigned int &n_candidate,
       htb_buf[start_address + offset] = word;
       offset++;
     }
+
+#if DEBUG_INTERFACE
+    hls::print("BATCH: Packing node %d\n", (unsigned int)tuple_in.indexing_v);
+#endif
+
     pointer++;
     tuple_in = stream_tuple_in.read();
   };
   htb_buf[start_address + offset] = word;
   n_candidate = pointer;
+
+#if DEBUG_INTERFACE
+  hls::print("BATCH: Finished. Total candidates = %d\n", (unsigned int)pointer);
+#endif
 }
 
 template<typename T_BLOOM,
