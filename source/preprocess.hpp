@@ -503,14 +503,23 @@ void bloomWrite(row_t *bloom_p,
 {
   constexpr size_t K_FUN = (1UL << K_FUN_LOG);
   row_t packing_buffer;
-  
   bloom_write_tuple_t tuple_in;
+
+#if DEBUG_INTERFACE
+  hls::print("BLOOM_WRITE: Starting.\n", 0);
+#endif
 
 BLOOM_WRITE_TASK_LOOP:
   do {
 #pragma HLS pipeline II = (1UL << K_FUN_LOG)
-    tuple_in = stream_address.read();
 
+#if DEBUG_INTERFACE
+    hls::print("BLOOM_WRITE: Waiting for address tuple.\n", 0);
+#endif
+    tuple_in = stream_address.read();
+#if DEBUG_INTERFACE
+    hls::print("BLOOM_WRITE: Read address %d.\n", (unsigned int)tuple_in.address);
+#endif
     // Read the K_FUNCTIONS filters for this address. Total of 256 bits
     for (int g = 0; g < K_FUN; g++) {
 #pragma HLS unroll
@@ -533,6 +542,9 @@ BLOOM_WRITE_TASK_LOOP:
 //         row = row & (row - 1);
 //       }
 // #endif /* DEBUG_STATS */
+#if DEBUG_INTERFACE
+    hls::print("BLOOM_WRITE: Finished.\n", 0);
+#endif
 }
 
 template <typename T_DDR,
