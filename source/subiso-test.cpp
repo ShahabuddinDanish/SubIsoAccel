@@ -622,20 +622,20 @@ int main(int argc, char** argv)
 
             // Call load_datagraphs with the query info
             unsigned long next_write_p = load_datagraphs<
-            VERTEX_WIDTH_BIT,
-            LABEL_WIDTH,
-            DYN_FIFO_BURST,
-            RESULTS_SPACE,
-            MAX_QUERYDATA>(
-            res_buf,
-            std::string(datagraph),
-            dynfifo_space,
+                VERTEX_WIDTH_BIT,
+                LABEL_WIDTH,
+                DYN_FIFO_BURST,
+                RESULTS_SPACE,
+                MAX_QUERYDATA>(
+                res_buf,
+                std::string(datagraph),
+                dynfifo_space,
                 nDE,
                 nQV,
                 nQE
             );
 
-	    std::cout << "INFO: Datagraph Edges (nDE) loaded: " << nDE << std::endl; 
+            std::cout << "INFO: Datagraph Edges (nDE) loaded: " << nDE << std::endl; 
 
             // load query
             auto res = load_querygraphs<
