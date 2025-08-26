@@ -472,8 +472,7 @@ template<typename T_BLOOM,
          size_t LKP3_HASH_W,
          size_t MAX_HASH_W,
          size_t FULL_HASH_W>
-void
-mwj_findmin(bloom_t* bloom_p,
+void mwj_findmin(row_t* bloom_p,
             const unsigned char hash1_w,
             const unsigned char hash2_w,
             hls::stream<findmin_tuple_t>& stream_tuple_in,
@@ -508,16 +507,20 @@ FINDMIN_TASK_LOOP:
       // Computing addresses of indexed sets
       ap_uint<LKP3_HASH_W> hash_out;
       ap_uint<MAX_HASH_W> hash_trimmed;
-      xf::database::details::hashlookup3_core<V_ID_W>(tuple_in.indexing_v,
-                                                      hash_out);
+      xf::database::details::hashlookup3_core<V_ID_W>(tuple_in.indexing_v, hash_out);
       hash_trimmed = hash_out;
       hash_trimmed = hash_trimmed.range(hash1_w - 1, 0);
-      unsigned int address =
-          (tuple_in.tb_index * (1UL << hash1_w)) + hash_trimmed;
-      address <<= K_FUN_LOG;
+
+      // Calculate address of the 512-bit word
+      unsigned int word_addr_512 = (tuple_in.tb_index * (1UL << hash1_w)) + hash_trimmed;
+
+      // Read the full 512-bit word from DDR
+      row_t bloom_word = bloom_p[word_addr_512];
+
       for (int s = 0; s < K_FUN; s++) {
 #pragma HLS unroll
-        T_BLOOM set_bloom = bloom_p[address + s];
+        // Unpack the correct 128-bit bloom_t from its slot                        
+        T_BLOOM set_bloom = bloom_word.range(INSTR_WIDTH * (s + 1) - 1, INSTR_WIDTH * s);
         bloom_s += bloom_intersect<T_BLOOM, BLOOM_LOG>(filter[s], set_bloom);
       }
       reqs_findmin++;
@@ -617,20 +620,17 @@ READMIN_COUNTER_TASK_LOOP:
       addr_row = hTables[tuple_in.tb_index].start_offset +
                  (tuple_in.addr_counter >> (DDR_BIT - C_W));
 
-      /* Compute address of data inside the row */
-      addr_inrow = tuple_in.addr_counter.range((DDR_BIT - C_W) - 1, 0);
-
       /* Read the data */
       ram_row = m_axi[addr_row];
-      if (addr_inrow == 0) {
-        offset = ram_row.range((1UL << C_W) - 1, 0);
-      } else if (addr_inrow == 1) {
-        offset = ram_row.range((2UL << C_W) - 1, 1UL << C_W);
-      } else if (addr_inrow == 2) {
-        offset = ram_row.range((3UL << C_W) - 1, 2UL << C_W);
-      } else {
-        offset = ram_row.range((4UL << C_W) - 1, 3UL << C_W);
-      }
+
+      /* Compute address of data inside the row.
+        addr_inrow is now an index from 0 to 15 (512 bits / 32 bits per counter) */
+      addr_inrow = tuple_in.addr_counter.range((DDR_BIT - C_W) - 1, 0);
+
+      // Directly extract the 32-bit counter from the correct slot in the 512-bit word
+      const int COUNTER_WIDTH_BITS = (1UL << C_W);
+      offset = ram_row.range(COUNTER_WIDTH_BITS * (addr_inrow + 1) - 1, COUNTER_WIDTH_BITS * addr_inrow);
+
       reqs_readmin_counter++;
 #if DEBUG_STATS
       debug::readmin_counter_reads++;
