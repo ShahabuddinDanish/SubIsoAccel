@@ -519,15 +519,21 @@ int main(int argc, char** argv)
 
     //row_t *res_buf;
     row_t *htb_buf;
-    bloom_t *bloom_p;
+    // bloom_t *bloom_p;
+    row_t *bloom_p_512; 
 
     char cwd[100];
     if (getcwd(cwd, sizeof(cwd)) != NULL)
         std::cout << "Current working dir: " << cwd << std::endl;
 
+    // The total number of bytes remains the same, but calculated using the 512-bit type.
+    // The number of 512-bit elements is BLOOM_SPACE / 4.
+    const size_t bloom_elements_512 = BLOOM_SPACE / 4;
+    const size_t bloom_bytes = bloom_elements_512 * sizeof(row_t);
+
     //posix_memalign((void **)&res_buf, 4096, RESULTS_SPACE * sizeof(row_t));
     posix_memalign((void **)&htb_buf, 4096, HASHTABLES_SPACE * sizeof(row_t));
-    posix_memalign((void **)&bloom_p, 4096, BLOOM_SPACE * sizeof(bloom_t));
+    posix_memalign((void **)&bloom_p_512, 4096, bloom_bytes);
 
     // row_t *htb_buf = (row_t *)calloc(HASHTABLES_SPACE, sizeof(row_t));
     if (!htb_buf)
@@ -537,7 +543,7 @@ int main(int argc, char** argv)
     }
 
     // bloom_t *bloom_p = (bloom_t *)calloc(BLOOM_SPACE, sizeof(bloom_t));
-    if (!bloom_p)
+    if (!bloom_p_512)
     {
         std::cout << "Allocation failed." << std::endl;
         return -1;
@@ -684,26 +690,28 @@ int main(int argc, char** argv)
             }
 
             auto bloom_size = tablelist_length * pow(2, h1) * 64;
-            if (bloom_size > BLOOM_SPACE * sizeof(bloom_t)){
+            if (bloom_size > bloom_bytes){
                 std::cout << "Error: Bloom overflow." << std::endl;
                 return -1;
             }
 
             std::cout << "Allocating " << 
                 (unsigned long)((HASHTABLES_SPACE + RESULTS_SPACE) * sizeof(row_t) +
-                BLOOM_SPACE * sizeof(bloom_t)) << " bytes." << std::endl;
+                bloom_bytes) << " bytes." << std::endl;
             std::cout << "Hashtables use " << (hashtable_size / (HASHTABLES_SPACE * sizeof(row_t))) * 100 << "% of space." << std::endl; 
-            std::cout << "Bloom use " << (bloom_size / (BLOOM_SPACE * sizeof(bloom_t))) * 100 << "% of space." << std::endl;
+            std::cout << "Bloom use " << (bloom_size / bloom_bytes) * 100 << "% of space." << std::endl;
 
             memset(htb_buf, 0, HASHTABLES_SPACE * sizeof(row_t));
-            memset(bloom_p, 0, BLOOM_SPACE * sizeof(bloom_t));
+            memset(bloom_p_512, 0, bloom_bytes);
+
+            std::cout << "INFO: Allocating hashtables and bloom filter buffers." << std::endl;
 
             // Create buffer objects from host-side pointers
             auto htb_buf_bo_b0 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(0));      // Argument 0 -> htb_buf -> Bank 0
             //auto htb_buf_bo_b1 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(1));    // Argument 1 -> htb_buf -> Bank 1
             //auto htb_buf_bo_b2 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(2));    // Argument 2 -> htb_buf -> Bank 2
             //auto htb_buf_bo_b3 = xrt::bo(device, htb_buf, HASHTABLES_SPACE * sizeof(row_t), bo_flags, krnl.group_id(3));    // Argument 3 -> htb_buf -> Bank 3
-            auto bloom_bo = xrt::bo(device, bloom_p, BLOOM_SPACE * sizeof(bloom_t), bo_flags, krnl.group_id(4));
+            auto bloom_bo = xrt::bo(device, bloom_p_512, bloom_bytes, bo_flags, krnl.group_id(4));
 
             // Sync the buffers that contain input data to the device
             std::cout << "Synchronize input buffer data to device global memory." << std::endl;
@@ -799,7 +807,7 @@ int main(int argc, char** argv)
         }
     }
     free(htb_buf);
-    free(bloom_p);
+    free(bloom_p_512);
     //free(res_buf);
     return 0;
 }
