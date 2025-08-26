@@ -1508,6 +1508,11 @@ void mwj_assembly(row_t* m_axi,
   ap_uint<32> nodes_read = 0;
   bool stop = false;
 
+#if DEBUG_INTERFACE
+  hls::print("MWJ_ASSEMBLY: Starting. n_candidate=%d\n", n_candidate);
+  hls::print("MWJ_ASSEMBLY: start_candidate_addr=%d\n", start_candidate);
+#endif
+
   // comes from utils.hpp and calculates the log base 2 at compile time
   const int NODES_PER_ROW_LOG = xf::database::details::Log2<VERTICES_PER_ROW>::value;
 
@@ -1515,6 +1520,11 @@ ASSEMBLY_TASK_LOOP:
   do {
     // Test if there are some node from start batch
     if (nodes_read < n_candidate) {
+
+#if DEBUG_INTERFACE
+      hls::print("ASSEMBLY: Reading candidate %d\n", (unsigned int)nodes_read);
+#endif
+
       ap_uint<32> row_select = nodes_read / VERTICES_PER_ROW;
 
       // parametric modulo 4 or 16. It selects the correct 32-bit "slot"
@@ -1523,7 +1533,10 @@ ASSEMBLY_TASK_LOOP:
       row_t row = m_axi[start_candidate + row_select];
 
       ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1, V_ID_W * word_select);
-      
+
+#if DEBUG_INTERFACE
+      hls::print("ASSEMBLY: Read node=%d. About to write to dynfifo.\n", (unsigned int)node);
+#endif
       /* False extension for single node solutions */
       stream_partial_out.write(FAKE_NODE);
       stream_partial_out.write(node);
@@ -1531,6 +1544,9 @@ ASSEMBLY_TASK_LOOP:
       partial_sol = 1;
       nodes_read++;
     } else {
+#if DEBUG_INTERFACE
+      hls::print("ASSEMBLY: Finished candidates. Writing STOP_NODE.\n", 0);
+#endif
       stream_partial_out.write(STOP_NODE);
     }
 
