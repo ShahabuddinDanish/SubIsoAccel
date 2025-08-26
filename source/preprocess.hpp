@@ -422,8 +422,7 @@ template<typename T_BLOOM,
          size_t BLOOM_LOG,
          size_t K_FUN_LOG,
          size_t FULL_HASH_W>
-void
-bloomUpdate(hls::stream<bloom_update_tuple_t<FULL_HASH_W> >& stream_tuple_in,
+void bloomUpdate(hls::stream<bloom_update_tuple_t<FULL_HASH_W> >& stream_tuple_in,
            hls::stream<bloom_write_tuple_t>& stream_address,
            hls::stream<T_BLOOM> stream_filter[(1UL << K_FUN_LOG)])
 {
@@ -461,34 +460,42 @@ bloomUpdate(hls::stream<bloom_update_tuple_t<FULL_HASH_W> >& stream_tuple_in,
 }
 
 template <typename T_BLOOM, size_t K_FUN_LOG>
-void bloomWrite(T_BLOOM *bloom_p,
+void bloomWrite(row_t *bloom_p,
                 hls::stream<bloom_write_tuple_t> &stream_address,
                 hls::stream<T_BLOOM> stream_filter[(1UL << K_FUN_LOG)])
 {
   constexpr size_t K_FUN = (1UL << K_FUN_LOG);
+  row_t packing_buffer;
+  
   bloom_write_tuple_t tuple_in;
+
 BLOOM_WRITE_TASK_LOOP:
-  do
-  {
+  do {
 #pragma HLS pipeline II = (1UL << K_FUN_LOG)
     tuple_in = stream_address.read();
-    for (int g = 0; g < K_FUN; g++)
-    {
-#pragma HLS unroll
-      bloom_p[(tuple_in.address << K_FUN_LOG) + g] =
-          stream_filter[g].read();
 
-#if DEBUG_STATS
-      /* Computing the number of ones in each filter*/
-      T_BLOOM row = bloom_p[(tuple_in.address << K_FUN_LOG) + g];
-      while (row > 0)
-      {
-        debug::bloom_fullness++;
-        row = row & (row - 1);
-      }
-#endif /* DEBUG_STATS */
+    // Read the K_FUNCTIONS filters for this address. Total of 256 bits
+    for (int g = 0; g < K_FUN; g++) {
+#pragma HLS unroll
+      T_BLOOM filter_chunk = stream_filter[g].read();
+      // Pack the g-th 128-bit filter into the g-th slot of the 512-bit word.
+      packing_buffer.range(128 * (g + 1) - 1, 128 * g) = filter_chunk;
     }
+
+    // The 512-bit buffer is now full, write packed 512-bit word to DDR
+    bloom_p[tuple_in.address] = packing_buffer;
+
   } while (!tuple_in.last);
+
+// #if DEBUG_STATS
+//       /* Computing the number of ones in each filter*/
+//       T_BLOOM row = bloom_p[(tuple_in.address << K_FUN_LOG) + g];
+//       while (row > 0)
+//       {
+//         debug::bloom_fullness++;
+//         row = row & (row - 1);
+//       }
+// #endif /* DEBUG_STATS */
 }
 
 template <typename T_DDR,
@@ -506,7 +513,7 @@ template <typename T_DDR,
           size_t K_FUN_LOG,
           size_t STREAM_D>
 void writeBloom(
-    T_BLOOM *bloom_p,
+    T_DDR *bloom_p,
     T_DDR *htb_p0,
     T_DDR *htb_p1,
     AdjHT *hTables,
@@ -1402,7 +1409,7 @@ void
 fillTablesURAM(row_t* edge_buf,
                T_DDR* htb_buf,
                T_DDR* htb_buf1,
-               T_BLOOM* bloom_p,
+               row_t* bloom_p,
                QueryVertex* qVertices,
                AdjHT* hTables0,
                AdjHT* hTables1,
@@ -1558,7 +1565,7 @@ void
 preprocess(row_t* edge_buf,
            T_DDR* htb_buf0,
            T_DDR* htb_buf1,
-           T_BLOOM* bloom_p,
+           row_t* bloom_p,
            QueryVertex* qVertices,
            AdjHT* hTables0,
            AdjHT* hTables1,
