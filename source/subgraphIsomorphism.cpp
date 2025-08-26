@@ -1107,23 +1107,13 @@ INTERSECT_TASK_LOOP:
 
           /* Compute address of data inside the row */
           addr_inrow = addr_counter.range((DDR_BIT - C_W) - 1, 0);
+
+          /* Get the 512-bit word from the cache */
           ram_row = htb_buf.get(addr_row, 1);
-          if (addr_inrow == 0)
-          {
-            offset = ram_row.range((1UL << C_W) - 1, 0);
-          }
-          else if (addr_inrow == 1)
-          {
-            offset = ram_row.range((2UL << C_W) - 1, 1UL << C_W);
-          }
-          else if (addr_inrow == 2)
-          {
-            offset = ram_row.range((3UL << C_W) - 1, 2UL << C_W);
-          }
-          else
-          {
-            offset = ram_row.range((4UL << C_W) - 1, 3UL << C_W);
-          }
+
+          /* Directly extract the 32-bit counter from the correct slot in the 512-bit word */
+          const int COUNTER_WIDTH_BITS = (1UL << C_W);
+          offset = ram_row.range(COUNTER_WIDTH_BITS * (addr_inrow + 1) - 1, COUNTER_WIDTH_BITS * addr_inrow);
 
 #if DEBUG_STATS
           debug::intersect_reads += 1;
