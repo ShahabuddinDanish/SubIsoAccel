@@ -110,14 +110,15 @@ template <size_t NODE_W,
          size_t BURST_SIZE,
          size_t RESULT_SPACE,
          size_t MAX_QDATA>
-void load_datagraphs(
+unsigned long load_datagraphs(
         row_t *edge_buf,
         std::string datafile,
         unsigned long &dynfifo_space,
-        unsigned long &numDataEdges)
+        unsigned long &numDataEdges,
+        unsigned short numQueryVertices,
+        unsigned short numQueryEdges)
 {
     unsigned long numDataVertices;
-    unsigned long edge_buf_p = 0;
     edge_t edge;
     
     /* Remove "../" to make paths correct */
@@ -125,7 +126,7 @@ void load_datagraphs(
     std::ifstream fData(datafile);
     if (!fData.is_open()){
         std::cout << "Datagraph file opening failed.\n";
-        return;
+        return 0;
     }
 
     std::string fLine{};
@@ -134,15 +135,19 @@ void load_datagraphs(
     std::getline(fData, fLine);
     sscanf(fLine.c_str(), "%*c %lu %lu", &numDataVertices, &numDataEdges);
 
-    // Find space for the graph and align it to BURST_SIZE
-    dynfifo_space = numDataEdges + MAX_QDATA;
-    dynfifo_space = dynfifo_space - (dynfifo_space % BURST_SIZE) + BURST_SIZE;
+    // Calculate total number of 128-bit instructions needed to store
+    unsigned long total_128bit_items = numDataEdges + numQueryVertices + numQueryEdges;
+    // Calculate how many 512-bit words are needed to store instructions
+    unsigned long num_512bit_words_for_graph = (total_128bit_items + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+
+    // The dynamic FIFO gets the remaining space. Its starting address is 0.
+    // The graph data will be placed at the end of the buffer.
+    dynfifo_space = RESULTS_SPACE - num_512bit_words_for_graph;
     if (dynfifo_space > RESULT_SPACE){
         std::cout << "Not enough space for dynamic fifo.\n";
-        return;
+        return -1;
     }
-    dynfifo_space = RESULT_SPACE - dynfifo_space;
-    edge_buf_p = dynfifo_space;
+    unsigned long edge_buf_p = dynfifo_space; // The write pointer starts where the FIFO space ends.
 
     /* Store data labels */
     for(int count = 0; count < numDataVertices; count++){    
@@ -154,8 +159,7 @@ void load_datagraphs(
     
     row_t temp_word; 
     int pack_counter = 0;
-    // initially reset the buffer to zeros
-    memset(&temp_word, 0, sizeof(row_t));
+    memset(&temp_word, 0, sizeof(row_t));       // initially set the buffer to zero
 
     std::cout << "Loading and packing datagraph in DDR..." << std::endl;
     auto start = std::chrono::high_resolution_clock::now();
@@ -179,7 +183,7 @@ void load_datagraphs(
         pack_counter++;
 
         // if temp_word is full, write it to the main buffer and reset
-        if (pack_counter == 4) {
+        if (pack_counter == INSTR_PER_WORD) {
             // Copy the full temp_word to the edge buffer
             memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
             
@@ -198,6 +202,7 @@ void load_datagraphs(
     std::cout << "Done in " << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << " ms." << std::endl;
 
     fData.close();
+    return edge_buf_p; // Return the next free index
 }
 
 template <size_t NODE_W,
@@ -205,15 +210,15 @@ template <size_t NODE_W,
          size_t MAX_QDATA>
 std::pair<int, int> load_querygraphs(
         row_t *edge_buf,
+        unsigned long& edge_buf_p,
         std::string queryfile,
         const unsigned long dynfifo_space,
         unsigned short &numQueryVertices,
         unsigned short &numQueryEdges,
-        unsigned short &tableListLength,
-        unsigned long numDataEdges)
+        unsigned long numDataEdges,
+        unsigned short &tableListLength)
 {
     unsigned long numDataVertices;
-    unsigned long edge_buf_p = numDataEdges + dynfifo_space;
     std::string fLine{};
     std::unordered_map<unsigned long, unsigned long> vToLabelQuery;
     std::vector<std::vector<unsigned long>> adjacency_list;
@@ -366,7 +371,6 @@ std::pair<int, int> load_querygraphs(
     /* Stream edges */
     // Fill all fields from edge_list
     for(int count = 0; count < numQueryEdges; count++){    
-        unsigned long nodesrc_t, nodedst_t;
         auto tuple_edge = edge_list[count];
         edge.src = std::get<0>(tuple_edge);
         edge.dst = std::get<1>(tuple_edge);
@@ -592,8 +596,17 @@ int main(int argc, char** argv)
 
         std::cout << "Datagraph: " << datagraph << std::endl;
 
-        // load graph
-        load_datagraphs<
+        for (const TestEntry &testEntry : entries) {
+
+            // First read the query file to get the vertex/edge counts for allocation
+            std::ifstream fQuery(std::string(testEntry.querygraph).substr(3));
+            std::string fLine;
+            std::getline(fQuery, fLine);
+            sscanf(fLine.c_str(), "%*c %hu %hu", &nQV, &nQE);
+            fQuery.close();
+
+            // Call load_datagraphs with the query info
+            unsigned long next_write_p = load_datagraphs<
             VERTEX_WIDTH_BIT,
             LABEL_WIDTH,
             DYN_FIFO_BURST,
@@ -602,24 +615,27 @@ int main(int argc, char** argv)
             res_buf,
             std::string(datagraph),
             dynfifo_space,
-            nDE);
+                nDE,
+                nQV,
+                nQE
+            );
 
 	    std::cout << "INFO: Datagraph Edges (nDE) loaded: " << nDE << std::endl; 
 
-        for (const TestEntry &testEntry : entries)
-        {
             // load query
             auto res = load_querygraphs<
                 VERTEX_WIDTH_BIT,
                 LABEL_WIDTH,
                 MAX_QUERYDATA>(
                 res_buf,
+                next_write_p, // Pass the returned pointer
                 std::string(testEntry.querygraph),
                 dynfifo_space,
                 nQV,
                 nQE,
-                tablelist_length,
-                nDE);
+                nDE,
+                tablelist_length
+            );
             
             if (res.first < 0) {
                 std::cout << "Error loading query graph." << std::endl;
