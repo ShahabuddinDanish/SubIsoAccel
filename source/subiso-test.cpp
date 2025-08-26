@@ -397,26 +397,35 @@ std::pair<int, int> load_querygraphs(
 
     std::cout << "\n--- KERNEL DATA VERIFICATION ---" << std::endl;
 
-    // 1. Verify the final calculated order
+    // Verify the final calculated order
     std::cout << "Final Vertex Order Sent to Kernel: [ ";
     for(int node : order) {
         std::cout << node << " ";
     }
     std::cout << "]" << std::endl;
 
-    // 2. Dump the raw buffer contents that the kernel will read
+    // Dump the raw buffer contents that the kernel will read
     std::cout << "Raw Buffer Content (first 20 entries):" << std::endl;
     std::cout << "Type      \t|\t src \t|\t dst \t|\t lsrc \t|\t ldst" << std::endl;
     std::cout << "----------------------------------------------------------------" << std::endl;
 
     // Calculate where the query data starts in the main buffer
-    unsigned long query_start_p = numDataEdges + dynfifo_space;
+    unsigned long num_data_words = (numDataEdges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+    unsigned long query_start_word_p = dynfifo_space + num_data_words;
 
     // Loop through and print the first few instructions
     for (int i = 0; i < (numQueryVertices + numQueryEdges) && i < 20; ++i) {
+
+        // Calculate which 512-bit word and which 128-bit slot to read
+        unsigned long word_idx = query_start_word_p + (i / INSTR_PER_WORD);
+        unsigned long slot_idx = i % INSTR_PER_WORD;
+
         // Cast raw row_t buffer data back to an edge_t to inspect it
+        row_t temp_word = edge_buf[word_idx];
         edge_t temp_edge;
-        memcpy(&temp_edge, ((char*)&edge_buf[query_start_p]) + i * sizeof(edge_t), sizeof(edge_t));
+
+        // Unpack from the correct slot in the 512-bit word
+        memcpy(&temp_edge, ((char*)&temp_word) + (slot_idx * sizeof(edge_t)), sizeof(edge_t));
 
         if (i < numQueryVertices) {
             std::cout << "Vertex Inst\t|\t "
