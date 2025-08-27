@@ -1522,7 +1522,7 @@ ASSEMBLY_TASK_LOOP:
     if (nodes_read < n_candidate) {
 
 #if DEBUG_INTERFACE
-      hls::print("ASSEMBLY: Reading candidate %d\n", (unsigned int)nodes_read);
+      hls::print("MWJ_ASSEMBLY_TASK_LOOP: Reading candidate %d\n", (unsigned int)nodes_read);
 #endif
 
       ap_uint<32> row_select = nodes_read / VERTICES_PER_ROW;
@@ -1535,7 +1535,7 @@ ASSEMBLY_TASK_LOOP:
       ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1, V_ID_W * word_select);
 
 #if DEBUG_INTERFACE
-      hls::print("ASSEMBLY: Read node=%d. About to write to dynfifo.\n", (unsigned int)node);
+      hls::print("MWJ_ASSEMBLY_TASK_LOOP: Read node=%d. About to write to dynfifo.\n", (unsigned int)node);
 #endif
       /* False extension for single node solutions */
       stream_partial_out.write(FAKE_NODE);
@@ -1545,7 +1545,7 @@ ASSEMBLY_TASK_LOOP:
       nodes_read++;
     } else {
 #if DEBUG_INTERFACE
-      hls::print("ASSEMBLY: Finished candidates. Writing STOP_NODE.\n", 0);
+      hls::print("MWJ_ASSEMBLY_TASK_LOOP: Finished candidates. Writing STOP_NODE.\n", 0);
 #endif
       stream_partial_out.write(STOP_NODE);
     }
@@ -1911,6 +1911,25 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     htb_cache.init();
     htb_cache2.init();
 
+    std::thread stream_merger_t(stream_merger,
+                                std::ref(assembly_to_merger_stream),
+                                std::ref(fifo_to_merger_stream),
+                                std::ref(merger_to_propose_stream));
+
+    std::thread mwj_propose_t(mwj_propose, 
+                              std::ref(merger_to_propose_stream), 
+                              std::ref(p0_stream_sol));
+
+    std::thread mwj_assembly_t(mwj_assembly,
+                               htb_buf3,
+                               n_candidate,
+                               start_candidate,
+                               nQueryVer,
+                               std::ref(mss_stream_sol),
+                               std::ref(streams_stop),
+                               std::ref(assembly_to_merger_stream),
+                               std::ref(result));
+
     std::thread mwj_edgebuild_t(mwj_edgebuild<LKP3_HASH_W, MAX_HASH_W, FULL_HASH_W>,
                                 hash1_w,
                                 qVertices,
@@ -1968,16 +1987,6 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
                              std::ref(bb_merge_stream_tuple),
                              std::ref(v_stream_tuple));
 
-    std::thread mwj_assembly_t(mwj_assembly,
-                               htb_buf3,
-                               n_candidate,
-                               start_candidate,
-                               nQueryVer,
-                               std::ref(mss_stream_sol),
-                               std::ref(streams_stop),
-                               std::ref(a_stream_sol),
-                               std::ref(result));
-
     mwj_edgebuild_t.join();
     mwj_findmin_t.join();
     mwj_readmin_counter_t.join();
@@ -1986,6 +1995,8 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     mwj_tuplebuild_t.join();
     mwj_intersect_t.join();
     mwj_verify_t.join();
+    stream_merger_t.join();
+    mwj_propose_t.join();
     mwj_assembly_t.join();
 
 #if DEBUG_STATS
