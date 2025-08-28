@@ -1595,30 +1595,6 @@ ASSEMBLY_TASK_LOOP:
   }
 }
 
-void stream_merger(
-    hls::stream<ap_uint<V_ID_W>>& from_assembly,
-    hls::stream<ap_uint<V_ID_W>>& from_dynfifo,
-    hls::stream<ap_uint<V_ID_W>>& to_propose
-) {
-    const ap_uint<V_ID_W> STOP_NODE = ~0;
-    ap_uint<V_ID_W> data;
-
-    // Stream all initial candidates from the assembly stage
-    do {
-#pragma HLS pipeline II=1
-        data = from_assembly.read();
-        to_propose.write(data);
-    } while (data != STOP_NODE);
-
-    // Now process intermediate results from dynamic FIFO
-    while(true) {
-#pragma HLS pipeline II=1
-        data = from_dynfifo.read();
-        to_propose.write(data);
-        // stop signal from the main loop will terminate the stream
-    }
-}
-
 template<size_t BATCH_SIZE_LOG>
 void
 intersectcache_wrapper(AdjHT* hTables,
@@ -1767,17 +1743,17 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     /* Stop signals */
     hls_thread_local hls::stream<bool, 4> streams_stop[STOP_S];
 
-    /* Streams to resolve the circular dependency deadlock */
-    hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> assembly_to_merger_stream;
-    hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> merger_to_propose_stream;
+    // /* Streams to resolve the circular dependency deadlock */
+    // hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> assembly_to_merger_stream;
+    // hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> merger_to_propose_stream;
 
-    // The main feedback loop now goes from the pipeline back to the FIFO
-    // Previously used stream 'a_stream_sol'
-    hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> feedback_to_fifo_stream; 
+    // // The main feedback loop now goes from the pipeline back to the FIFO
+    // // Previously used stream 'a_stream_sol'
+    // hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> feedback_to_fifo_stream; 
 
-    // The fifo's output now goes to the merger, not directly to propose
-    // Previously used stream 'dyn_stream_sol'
-    hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> fifo_to_merger_stream; 
+    // // The fifo's output now goes to the merger, not directly to propose
+    // // Previously used stream 'dyn_stream_sol'
+    // hls_thread_local hls::stream<ap_uint<V_ID_W>, DYN_FIFO_DEPTH> fifo_to_merger_stream; 
 
     htb_cache_t htb_cache(htb_buf0);
     htb_cache2_t htb_cache2(htb_buf2);
@@ -1793,24 +1769,27 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
        dynfifo_space,
        dynfifo_overflow,
        reqs_dynfifo,
-       feedback_to_fifo_stream,   // Input is now from the feedback loop
-       fifo_to_merger_stream,     // Output now goes to the merger
+       a_stream_sol,
+       dyn_stream_sol,
        streams_stop[STOP_S - 2],
        streams_stop[STOP_S - 1]);
 
-#ifdef __SYNTHESIS__
-    hls_thread_local hls::task mwj_propose_t(
-      mwj_propose, merger_to_propose_stream, p0_stream_sol // Input is from the merger
-    );
-/*
+// #ifdef __SYNTHESIS__
+//     hls_thread_local hls::task mwj_propose_t(
+//       mwj_propose, merger_to_propose_stream, p0_stream_sol // Input is from the merger
+//     );
+// /*
+//     hls_thread_local hls::task mwj_propose_t(
+//       mwj_propose, dyn_stream_sol, p0_stream_sol);
+// */
+
+//     hls_thread_local hls::task stream_merger_t(
+//         stream_merger, assembly_to_merger_stream, fifo_to_merger_stream, merger_to_propose_stream
+//     );
+// #endif
+
     hls_thread_local hls::task mwj_propose_t(
       mwj_propose, dyn_stream_sol, p0_stream_sol);
-*/
-
-    hls_thread_local hls::task stream_merger_t(
-        stream_merger, assembly_to_merger_stream, fifo_to_merger_stream, merger_to_propose_stream
-    );
-#endif
 
     hls_thread_local hls::task mwj_bypassfilter_t(
       mwj_bypassfilter, (hls::stream<bloom_t, 4> *)p_stream_filter, (hls::stream<bloom_t, 4>*)rc_stream_filter);
@@ -1897,7 +1876,7 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
                  nQueryVer,
                  mss_stream_sol,
                  streams_stop,
-                 assembly_to_merger_stream, // Output now goes to the merger
+                 a_stream_sol,
                  result);
 
     htb_cache2.get_l1_stats(0, hits_readmin_edge, reqs_readmin_edge);
@@ -1910,7 +1889,7 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
 
     htb_cache.init();
     htb_cache2.init();
-
+/*
     std::thread stream_merger_t(stream_merger,
                                 std::ref(assembly_to_merger_stream),
                                 std::ref(fifo_to_merger_stream),
@@ -1919,6 +1898,7 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     std::thread mwj_propose_t(mwj_propose, 
                               std::ref(merger_to_propose_stream), 
                               std::ref(p0_stream_sol));
+*/
 
     std::thread mwj_assembly_t(mwj_assembly,
                                htb_buf3,
@@ -1927,7 +1907,7 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
                                nQueryVer,
                                std::ref(mss_stream_sol),
                                std::ref(streams_stop),
-                               std::ref(assembly_to_merger_stream),
+                               std::ref(a_stream_sol),
                                std::ref(result));
 
     std::thread mwj_edgebuild_t(mwj_edgebuild<LKP3_HASH_W, MAX_HASH_W, FULL_HASH_W>,
@@ -1995,8 +1975,8 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     mwj_tuplebuild_t.join();
     mwj_intersect_t.join();
     mwj_verify_t.join();
-    stream_merger_t.join();
-    mwj_propose_t.join();
+    // stream_merger_t.join();
+    // mwj_propose_t.join();
     mwj_assembly_t.join();
 
 #if DEBUG_STATS
