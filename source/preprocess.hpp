@@ -971,6 +971,7 @@ template<size_t NODE_W,
 void
 storeEdgesPerBlock(hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2],
                   hls::stream<processed_edge_t>& stream_out,
+                  hls::stream<bool>& stream_out_stop,
                   unsigned int block_n_edges[4096])
 {
     const size_t BRAM_LAT = 3;
@@ -1052,48 +1053,52 @@ STORE_EDGES_PER_BLOCK_LOOP:
     }
 #if DEBUG_INTERFACE
     hls::print("STORE_EDGES: Loop finished.\n", 0);
+    stream_out_stop.write(true);
 #endif
 }
 
 /* Handles packing and writing to memory */
 void packAndStoreEdges(hls::stream<processed_edge_t>& stream_in, 
-                       row_t* m_axi, 
-                       const unsigned long numDataEdges) 
+                       hls::stream<bool>& stream_in_stop,
+                       row_t* m_axi) 
 {
     row_t packing_buffer;
     int pack_counter = 0;
     unsigned int write_address = 0;
-
-// The total number of edges to process is doubled for undirected graphs.
-const unsigned long total_edges_to_pack = numDataEdges * 2;
+    bool stop = false;
 
 PACK_LOOP:
-    for (int i = 0; i < total_edges_to_pack; i++) {
+    while(!stop) {
 #pragma HLS pipeline II=1
         
 #if DEBUG_INTERFACE
-        hls::print("PACK_AND_STORE_EDGES: Waiting to read edge %d\n", (unsigned int)i);
+        hls::print("PACK_AND_STORE_EDGES: Waiting to read edge.\n", 0);
 #endif
 
-        // Read the next 128-bit processed edge from the stream.
-        processed_edge_t edge = stream_in.read();
+        // Use a non-blocking read for next 128-bit processed edge from the stream or read the stop signal
+        processed_edge_t edge;
+        if (stream_in.read_nb(edge)) {
 
 #if DEBUG_INTERFACE
-        hls::print("PACK_AND_STORE_EDGES: Read successful.\n", 0);
+          hls::print("PACK_AND_STORE_EDGES: Read successful.\n", 0);
 #endif
 
-        // Place the edge into the correct slot in 512-bit buffer
-        packing_buffer.range(INSTR_WIDTH * (pack_counter + 1) - 1, INSTR_WIDTH * pack_counter) = edge;
-        pack_counter++;
+          // Place the edge into the correct slot in 512-bit buffer
+          packing_buffer.range(INSTR_WIDTH * (pack_counter + 1) - 1, INSTR_WIDTH * pack_counter) = edge;
+          pack_counter++;
         
-        // If the buffer is full, write it to DDR and reset.
-        if (pack_counter == INSTR_PER_WORD) {
+          // If the buffer is full, write it to DDR and reset.
+          if (pack_counter == INSTR_PER_WORD) {
 #if DEBUG_INTERFACE
-            hls::print("PACK_EDGES: Writing full 512-bit word to address %d\n", write_address);
+              hls::print("PACK_EDGES: Writing full 512-bit word to address %d\n", write_address);
 #endif
-            m_axi[write_address] = packing_buffer;
-            write_address++;
-            pack_counter = 0;
+              m_axi[write_address] = packing_buffer;
+              write_address++;
+              pack_counter = 0;
+          }
+        } else {
+              // If the data stream is empty, check for the stop signal
+              stream_in_stop.read_nb(stop);
         }
     }
     
@@ -1130,6 +1135,8 @@ storeEdgePerBlockWrap(row_t* edge_buf,
     // Intermediate stream for sorted, ready-to-pack edges
     hls::stream<processed_edge_t, 32> sorted_edge_stream;
 
+    hls::stream<bool, 4> stop_stream;
+
     readAndStreamEdgesPerBlock<NODE_W,
                                LAB_W,
                                LKP3_HASH_W,
@@ -1143,11 +1150,11 @@ storeEdgePerBlockWrap(row_t* edge_buf,
 
     // Writes to sorted_edge_stream instead of DDR
     storeEdgesPerBlock<NODE_W, LAB_W, LKP3_HASH_W, MAX_HASH_W, MAX_LABELS>(
-        stream_edge, sorted_edge_stream, block_n_edges
+        stream_edge, sorted_edge_stream, stop_stream, block_n_edges
     );
 
     // Reads from stream and writes packed data to DDR
-    packAndStoreEdges(sorted_edge_stream, block_buf, numDataEdges);
+    packAndStoreEdges(sorted_edge_stream, stop_stream, block_buf);
 }
 
 template<size_t NODE_W,
