@@ -1164,8 +1164,7 @@ template<size_t NODE_W,
          size_t LKP3_HASH_W,
          size_t MAX_HASH_W,
          size_t MAX_LABELS>
-void
-blockToHTB(row_t* edge_buf,
+void blockToHTB(row_t* edge_buf,
            row_t* htb_buf,
            AdjHT* hTables,
            const unsigned char hash1_w,
@@ -1189,7 +1188,7 @@ blockToHTB(row_t* edge_buf,
 #endif
 
 /* Loop 2^(COUNTERS_PER_BLOCK - 2) since one block is split in two memories and
- * every memroy keep two counters per line*/
+ * every memory keep two counters per line*/
 INITIALIZE_URAM_LOOP:
     for (auto g = 0; g < (1UL << (COUNTERS_PER_BLOCK - 2)); g++) {
 #pragma HLS pipeline II = 1
@@ -1200,10 +1199,11 @@ INITIALIZE_URAM_LOOP:
     auto prev_offset = 0;
     auto prev_ntb = 0;
     unsigned int base_address = 0;
+
 BLOCK_HTB_TOP_LOOP:
     for (auto s = 0; s < block_per_table * numTables; s++) {
 #if DEBUG_INTERFACE
-      hls::print("BLOCK_TO_HTB: TOP_LOOP, processing block s=%d\n", (unsigned int)s);
+        hls::print("BLOCK_TO_HTB: TOP_LOOP, processing block s=%d\n", (unsigned int)s);
 #endif
         auto block_edges = block_n_edges[s] - prev_offset;
         auto ntb = s >> (hash1_w + hash2_w - COUNTERS_PER_BLOCK);
@@ -1211,7 +1211,8 @@ BLOCK_HTB_TOP_LOOP:
             base_address = 0;
         }
 
-      const unsigned long num_block_words = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+        const unsigned long num_block_words = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+
 #if DEBUG_INTERFACE
       hls::print("BLOCK_TO_HTB: TOP_LOOP, block_edges=%d\n", (unsigned int)block_edges);
       hls::print("BLOCK_TO_HTB: TOP_LOOP, num_block_words=%d\n", (unsigned int)num_block_words);
@@ -1238,6 +1239,7 @@ COUNT_EDGES_INSIDE_BLOCK_LOOP:
               ap_uint<COUNTERS_PER_BLOCK> address = indexing_hash;
               address <<= hash2_w;
               address += indexed_hash;
+
               ap_uint<64> row_counter0;
               ap_uint<64> row_counter1;
               ap_uint<64> row_counter;
@@ -1299,7 +1301,6 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
         for (auto g_word = 0; g_word < num_block_words_store; g_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
           row_t packed_edge = edge_buf[prev_offset + g_word];
-
           for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
 #pragma HLS unroll
             if ((g_word * INSTR_PER_WORD + g_unpack) < block_edges) {
@@ -1315,6 +1316,7 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
               ap_uint<COUNTERS_PER_BLOCK> address = indexing_hash;
               address <<= hash2_w;
               address += indexed_hash;
+
               ap_uint<64> row_offset0;
               ap_uint<64> row_offset1;
               ap_uint<64> row_offset;
@@ -1391,7 +1393,7 @@ STORE_OFFSETS_BLOCK_LOOP:
                 htb_buf[word_addr + (s * (NUM_COUNTER_WORDS / COUNTER_WORDS_PER_512))] = packed_counters;
             }
         }
-        prev_offset = block_n_edges[s];
+        prev_offset += num_block_words;
         prev_ntb = ntb;
     }
 #if DEBUG_INTERFACE
