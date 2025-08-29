@@ -167,7 +167,7 @@ std::pair<int, int> load_querygraphs(
     
     std::cout << "Querygraph: " << queryfile << std::endl; 
     if (!fQuery.is_open()){
-        std::cout << "Query file opening failed.\n";
+        std::cout << "Query file opening failed: " << queryfile << std::endl;
         return {-1, 0};
     }
 
@@ -180,8 +180,7 @@ std::pair<int, int> load_querygraphs(
     assert(MAX_QDATA >= numQueryEdges + numQueryVertices);
     
     /* Store query labels */
-    for (int count = 0; count < numQueryVertices; count++)
-    {
+    for (int count = 0; count < numQueryVertices; count++) {
         unsigned long node_t, label_t;
         std::getline(fQuery, fLine);
         sscanf(fLine.c_str(), "%*c %lu %lu %*u", &node_t, &label_t);
@@ -277,7 +276,7 @@ std::pair<int, int> load_querygraphs(
     /* Stream matching order */
     std::cout << "Query vertex order: [";
     for(int count = 0; count < numQueryVertices; count++){
-        // Initialize all fields for a vertex instruction (zero out the struct) before writing vertex order to buffer 
+        // Initialize all fields for a vertex instruction before writing vertex order to buffer 
         edge.src = order[count];
         edge.dst = 0;
         edge.labelsrc = 0;
@@ -322,8 +321,6 @@ std::pair<int, int> load_querygraphs(
     if (pack_counter > 0) {
         memcpy(&edge_buf[edge_buf_p++], &temp_word, sizeof(row_t));
     }
-
-    /* DEBUGGING STATEMENTS */
 
     std::cout << "\n--- KERNEL DATA VERIFICATION ---" << std::endl;
 
@@ -373,8 +370,6 @@ std::pair<int, int> load_querygraphs(
     }
     std::cout << "--- END KERNEL DATA VERIFICATION ---\n" << std::endl;
 
-    /* END DEBUGGING STATEMENTS */
-
     tableListLength = tablelist.size();
     return {0, max_degree};
 }
@@ -383,18 +378,34 @@ int main(int argc, char** argv) {
     // Setup Buffers and Parameters
     std::cout << "--- C-Simulation Testbench ---" << std::endl;
 
-    // Use the first test case from the run list for this example
-    std::string datagraph = "../dataset_example/label_5/data/graph_simple2.RM.csv";
-    std::string querygraph = "../dataset_example/label_5/queries2/query_simple.RM.csv";
-    long unsigned int golden = 8;
-    
-    unsigned short nQV = 0;
-    unsigned short nQE = 0;
-    unsigned short tablelist_length = 0;
-    unsigned long nDE = 0;
-    unsigned long dynfifo_space = 0;
-    
-    // --- Allocate Memory ---
+    /* Read tests from run_list_fpga.txt */
+    std::map<std::string, std::vector<TestEntry>> tests;
+    std::string prev_datagraph;
+
+    std::ifstream testfile("scripts/run_list_fpga.txt");
+    if (!testfile) {
+        std::cerr << "Error: Unable to open scripts/run_list_fpga.txt" << std::endl;
+        return -1;
+    }
+
+    std::string line;
+    while (std::getline(testfile, line)) {
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        std::string datagraph, querygraph, golden, h1, h2;
+        std::istringstream iss(line);
+        iss >> datagraph >> querygraph >> golden >> h1 >> h2;
+        if (datagraph == prev_datagraph) {
+            tests[datagraph].push_back({querygraph, golden, h1, h2});
+        } else {
+            tests[datagraph] = {{querygraph, golden, h1, h2}};
+        }
+        prev_datagraph = datagraph;
+    }
+    testfile.close();
+
+    /* Allocate Memory */
     row_t* htb_buf0 = new row_t[HASHTABLES_SPACE];
     row_t* htb_buf1 = new row_t[HASHTABLES_SPACE];
     row_t* htb_buf2 = new row_t[HASHTABLES_SPACE];
@@ -402,74 +413,107 @@ int main(int argc, char** argv) {
     row_t* res_buf = new row_t[RESULTS_SPACE];
     row_t* bloom_p = new row_t[BLOOM_SPACE];
 
-    memset(htb_buf0, 0, HASHTABLES_SPACE * sizeof(row_t));
-    memset(htb_buf1, 0, HASHTABLES_SPACE * sizeof(row_t));
-    memset(htb_buf2, 0, HASHTABLES_SPACE * sizeof(row_t));
-    memset(htb_buf3, 0, HASHTABLES_SPACE * sizeof(row_t));
-    memset(res_buf, 0, RESULTS_SPACE * sizeof(row_t));
-    memset(bloom_p, 0, BLOOM_SPACE * sizeof(row_t));
+    bool all_tests_passed = true;
 
-    // Load Graph Data into Buffers
-    // First read query file to get counts for allocation
-    std::ifstream fQuery(querygraph.substr(3));
-    std::string fLine;
-    std::getline(fQuery, fLine);
-    sscanf(fLine.c_str(), "%*c %hu %hu", &nQV, &nQE);
-    fQuery.close();
+    // --- NEW: Loop through all tests from the file ---
+    for (const auto& datagraph_entry : tests) {
+        const std::string& datagraph = datagraph_entry.first;
+        const std::vector<TestEntry>& queries = datagraph_entry.second;
 
-    unsigned long next_write_p = load_datagraphs<VERTEX_WIDTH_BIT,
-            LABEL_WIDTH,
-            DYN_FIFO_BURST,
-            RESULTS_SPACE,
-            MAX_QUERYDATA>(
-            res_buf, datagraph, dynfifo_space, nDE, nQV, nQE);
+        std::cout << "\n========================================================" << std::endl;
+        std::cout << "DATAGRAPH: " << datagraph << std::endl;
+        std::cout << "========================================================" << std::endl;
 
-    auto res = load_querygraphs<VERTEX_WIDTH_BIT,
-                LABEL_WIDTH,
-                MAX_QUERYDATA>(
-            res_buf, next_write_p, querygraph, dynfifo_space, nQV, nQE, nDE, tablelist_length);
-    
-    int max_degree = res.second;
-    unsigned char h1 = 9; // Hardcode for this test
-    unsigned char h2 = 5;  // Hardcode for this test
+        for (const auto& test : queries) {
+            std::cout << "\n--- Running Test ---" << std::endl;
+            std::cout << "  Query:  " << test.querygraph << std::endl;
+            std::cout << "  Golden: " << test.golden << std::endl;
 
-    // Call the HLS Kernel Function Directly
-    long unsigned int result_actual = 0;
-    unsigned int dynfifo_overflow = 0;
-    
-    // Variables for debug interface
-    volatile unsigned int debug_endpreprocess_s = 0;
-    unsigned long p_hits[5] = {0};
-    unsigned long p_reqs[7] = {0};
+            /* Initialize variables for each test run */
+            memset(htb_buf0, 0, HASHTABLES_SPACE * sizeof(row_t));
+            memset(htb_buf1, 0, HASHTABLES_SPACE * sizeof(row_t));
+            memset(htb_buf2, 0, HASHTABLES_SPACE * sizeof(row_t));
+            memset(htb_buf3, 0, HASHTABLES_SPACE * sizeof(row_t));
+            memset(res_buf, 0, RESULTS_SPACE * sizeof(row_t));
+            memset(bloom_p, 0, BLOOM_SPACE * sizeof(row_t));
 
-    std::cout << "Starting C Simulation of the kernel..." << std::endl;
+            unsigned short nQV = 0;
+            unsigned short nQE = 0;
+            unsigned short tablelist_length = 0;
+            unsigned long nDE = 0;
+            unsigned long dynfifo_space = 0;
+            long unsigned int golden = std::stoul(test.golden);
 
-    subgraphIsomorphism(
-        htb_buf0, htb_buf1, htb_buf2, htb_buf3,
-        bloom_p,
-        res_buf,
-        nQV, nQE, nDE,
-        h1, h2,
-        dynfifo_space,
-        dynfifo_overflow,
-#if DEBUG_INTERFACE
-        debug_endpreprocess_s,
-        p_hits[0], p_hits[1], p_hits[2], p_hits[3], p_hits[4],
-        p_reqs[0], p_reqs[1], p_reqs[2], p_reqs[3], p_reqs[4], p_reqs[5], p_reqs[6],
-#endif
-        result_actual
-    );
+            /* Load Graph Data into Buffers */
+            // First read query file to get counts for allocation
+            std::ifstream fQuery(test.querygraph.substr(3));
+            std::string fLine;
+            std::getline(fQuery, fLine);
+            sscanf(fLine.c_str(), "%*c %hu %hu", &nQV, &nQE);
+            fQuery.close();
 
-    std::cout << "C Simulation Finished." << std::endl;
+            unsigned long next_write_p = load_datagraphs<VERTEX_WIDTH_BIT,
+                    LABEL_WIDTH,
+                    DYN_FIFO_BURST,
+                    RESULTS_SPACE,
+                    MAX_QUERYDATA>(
+                    res_buf, datagraph, dynfifo_space, nDE, nQV, nQE);
 
-    // --- Check Results ---
-    std::cout << "Golden Result: " << golden << std::endl;
-    std::cout << "Actual Result: " << result_actual << std::endl;
+            auto res = load_querygraphs<VERTEX_WIDTH_BIT,
+                        LABEL_WIDTH,
+                        MAX_QUERYDATA>(
+                    res_buf, next_write_p, test.querygraph, dynfifo_space, nQV, nQE, nDE, tablelist_length);
 
-    bool match = (result_actual == golden);
-    std::cout << "Test " << (match ? "PASSED" : "FAILED") << std::endl;
+            int max_degree = res.second;
 
-    // --- Clean up memory ---
+            /* Dynamic H1/H2 Calculation */
+            unsigned char h1, h2;
+            std::cout << "INFO: Using dynamic heuristic for H1/H2." << std::endl;
+            h1 = static_cast<unsigned char>(0.4 * log(5e7 * nDE)) + 2;
+            h2 = static_cast<unsigned char>(std::min(max_degree + 1, 7));
+            if (h1 + h2 <= 14) {
+                h2 = 14 - h1; // assert H1+H2 atleast 14
+                std::cout << "INFO: Adjusted H2 to " << (int)h2 << " to meet minimum hash width sum requirement." << std::endl;
+            }            
+            std::cout << "INFO: Using H1=" << (int)h1 << ", H2=" << (int)h2 << std::endl;
+
+            /* Call the HLS Kernel Function */
+            long unsigned int result_actual = 0;
+            unsigned int dynfifo_overflow = 0;
+            volatile unsigned int debug_endpreprocess_s = 0;
+            unsigned long p_hits[5] = {0};
+            unsigned long p_reqs[7] = {0};
+
+            std::cout << "Starting C Simulation of the kernel..." << std::endl;
+            subgraphIsomorphism(
+                htb_buf0, htb_buf1, htb_buf2, htb_buf3,
+                bloom_p,
+                res_buf,
+                nQV, nQE, nDE,
+                h1, h2,
+                dynfifo_space,
+                dynfifo_overflow,
+        #if DEBUG_INTERFACE
+                debug_endpreprocess_s,
+                p_hits[0], p_hits[1], p_hits[2], p_hits[3], p_hits[4],
+                p_reqs[0], p_reqs[1], p_reqs[2], p_reqs[3], p_reqs[4], p_reqs[5], p_reqs[6],
+        #endif
+                result_actual
+            );
+            std::cout << "C Simulation Finished." << std::endl;
+
+            // --- Check Results ---
+            std::cout << "Golden Result: " << golden << std::endl;
+            std::cout << "Actual Result: " << result_actual << std::endl;
+            bool match = (result_actual == golden);
+            std::cout << "Test " << (match ? "PASSED" : "FAILED") << std::endl;
+            if (!match) {
+                all_tests_passed = false;
+            }
+        }
+    }
+
+    /* Clean up memory */
     delete[] htb_buf0;
     delete[] htb_buf1;
     delete[] htb_buf2;
@@ -477,5 +521,9 @@ int main(int argc, char** argv) {
     delete[] res_buf;
     delete[] bloom_p;
 
-    return (match ? 0 : 1);
+    std::cout << "\n========================================================" << std::endl;
+    std::cout << "OVERALL RESULT: " << (all_tests_passed ? "ALL TESTS PASSED" : "SOME TESTS FAILED") << std::endl;
+    std::cout << "========================================================" << std::endl;
+
+    return (all_tests_passed ? 0 : 1);
 }
