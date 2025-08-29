@@ -168,6 +168,11 @@ else
 	./$(EXECUTABLE) $(CMD_ARGS) $(EXTRA_ARGS)
 endif
 
+# Run HLS C-Simulation
+csim: check-vitis
+	$(ECHO) "Running HLS C-Simulation..."
+	vitis-run --mode hls --tcl ./scripts/run_csim.tcl
+
 ############################## Cleanup ##############################
 
 clean:
@@ -218,6 +223,9 @@ help:
 	$(ECHO) ""
 	$(ECHO) "  make test TARGET=<sw_emu/hw_emu/hw> PLATFORM=<FPGA platform> [EXTRA_ARGS=\"<host_app_args>\"]"
 	$(ECHO) "      Command to run the application for testing."
+	$(ECHO) ""
+	$(ECHO) "  make csim"
+	$(ECHO) "      Command to run HLS C-Simulation using the TCL script."
 	$(ECHO) ""
 	$(ECHO) "  make clean"
 	$(ECHO) "      Command to remove intermediate files."
