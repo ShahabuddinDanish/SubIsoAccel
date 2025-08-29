@@ -211,8 +211,7 @@ void bloomRead(AdjHT *hTables,
                const unsigned short numTables,
                const unsigned char hash1_w,
                hls::stream<bagtoset_tuple_t<NODE_W> > &stream_tuple_bagtoset_out,
-               hls::stream<bloom_update_tuple_t<FULL_HASH_W>> &stream_tuple_bloom_out)
-{
+               hls::stream<bloom_update_tuple_t<FULL_HASH_W>> &stream_tuple_bloom_out) {
   constexpr size_t EDGE_W = 1UL << EDGE_LOG;
   hls::stream<ap_uint<NODE_W>, 4> hash_in0, hash_in1;
   hls::stream<ap_uint<FULL_HASH_W>, 4> hash_out0;
@@ -257,74 +256,72 @@ BLOOM_READ_TASK_LOOP:
     prev_indexing_h and indexing_h to be useful to write the bloom */
     bool first_it = true;
     counter = 0;
-    unsigned int cycles = (hTables[ntb].n_edges >> 1) + 1;
-    //unsigned int cycles = (hTables[ntb].n_edges + EDGE_ROW - 1) / EDGE_ROW;
+    unsigned int cycles = (hTables[ntb].n_edges + EDGE_ROW - 1) / EDGE_ROW;
     unsigned int offset = hTables[ntb].start_edges;
+
+    if (hTables[ntb].n_edges == 0) continue; // Skip empty tables
 
     /* Read all the edges in a table and divide them by hash1 */
   BLOOM_READ_EDGES_BLOCK:
-    for (unsigned int start = 0; start < cycles; start++)
-    {
-#pragma HLS pipeline II = 2
-
+    for (unsigned int start = 0; start < cycles; start++) {
+#pragma HLS pipeline II = EDGE_ROW
       row = htb_buf[offset + start];
 
-      for (int i = 0; i < EDGE_ROW; i++)
-      {
+      for (int i = 0; i < EDGE_ROW; i++) {
 #pragma HLS unroll
-        edge = row.range(((i + 1) << EDGE_LOG) - 1, i << EDGE_LOG);
-        indexing_v = edge.range(NODE_W * 2 - 1, NODE_W);
-        indexed_v = edge.range(NODE_W - 1, 0);
+        if ((start * EDGE_ROW + i) < hTables[ntb].n_edges) {
+          edge = row.range(((i + 1) << EDGE_LOG) - 1, i << EDGE_LOG);
+          indexing_v = edge.range(NODE_W * 2 - 1, NODE_W);
+          indexed_v = edge.range(NODE_W - 1, 0);
+          row >>= EDGE_W;   // Right-shift for next iteration
 
-        hash_in0.write(indexed_v);
-        hash_in1.write(indexing_v);
-        xf::database::hashLookup3<NODE_W>(hash_in0, hash_out0);
-        xf::database::hashLookup3<NODE_W>(hash_in1, hash_out1);
-        indexed_h = hash_out0.read();
-        indexing_h = hash_out1.read();
-        indexing_h = indexing_h.range(hash1_w - 1, 0);
+          hash_in0.write(indexed_v);
+          hash_in1.write(indexing_v);
+          xf::database::hashLookup3<NODE_W>(hash_in0, hash_out0);
+          xf::database::hashLookup3<NODE_W>(hash_in1, hash_out1);
+          indexed_h = hash_out0.read();
+          indexing_h = hash_out1.read();
+          indexing_h = indexing_h.range(hash1_w - 1, 0);
 
-        bool valid = (counter < hTables[ntb].n_edges);
-        bool write = (indexing_h != prev_indexing_h);
-        /* Writing edge of previous iteration */
-        if (valid && !first_it)
-        {
-          tuple_out.address = ntb * (1UL << hash1_w) + prev_indexing_h;
-          tuple_out.last = false;
-          tuple_out.write = write;
-          tuple_out.indexed_h = prev_indexed_h;
+          bool valid = (counter < hTables[ntb].n_edges);
+          bool write = (indexing_h != prev_indexing_h);
+          /* Writing edge of previous iteration */
+          if (valid && !first_it) {
+            tuple_out.address = ntb * (1UL << hash1_w) + prev_indexing_h;
+            tuple_out.last = false;
+            tuple_out.write = write;
+            tuple_out.indexed_h = prev_indexed_h;
 #ifdef DEBUG_INTERFACE
-          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): address=%d\n", (unsigned int)tuple_out.address);
-          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
-          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): write=%d\n", (unsigned int)tuple_out.write);
-          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): last=%d\n", (unsigned int)tuple_out.last);
+            hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): address=%d\n", (unsigned int)tuple_out.address);
+            hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
+            hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): write=%d\n", (unsigned int)tuple_out.write);
+            hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): last=%d\n", (unsigned int)tuple_out.last);
 #endif
-          stream_tuple_bloom_out.write(tuple_out);
+            stream_tuple_bloom_out.write(tuple_out);
 
-          if (ntb == minTableIndex)
-          {
-            bagtoset_tuple_t<NODE_W> tuple_bagtoset_out;
-            tuple_bagtoset_out.indexing_v = prev_indexing_v;
-            tuple_bagtoset_out.write = write;
-            tuple_bagtoset_out.last = false;
-            tuple_bagtoset_out.valid = true;
+            if (ntb == minTableIndex) {
+              bagtoset_tuple_t<NODE_W> tuple_bagtoset_out;
+              tuple_bagtoset_out.indexing_v = prev_indexing_v;
+              tuple_bagtoset_out.write = write;
+              tuple_bagtoset_out.last = false;
+              tuple_bagtoset_out.valid = true;
 #ifdef DEBUG_INTERFACE
-            hls::print("[bloomRead DEBUG] Sending TUPLE 1: v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
-            hls::print("[bloomRead DEBUG] Sending TUPLE 1: valid=%d\n",(unsigned int)tuple_bagtoset_out.valid);
-            hls::print("[bloomRead DEBUG] Sending TUPLE 1: last=%d\n", (unsigned int)tuple_bagtoset_out.last);
+              hls::print("[bloomRead DEBUG] Sending TUPLE 1: v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
+              hls::print("[bloomRead DEBUG] Sending TUPLE 1: valid=%d\n",(unsigned int)tuple_bagtoset_out.valid);
+              hls::print("[bloomRead DEBUG] Sending TUPLE 1: last=%d\n", (unsigned int)tuple_bagtoset_out.last);
 #endif
-            stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
+              stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
+            }
           }
-        }
 
-        if (valid)
-        {
-          prev_indexing_h = indexing_h;
-          prev_indexing_v = indexing_v;
-          prev_indexed_h = indexed_h;
+          if (valid) {
+            prev_indexing_h = indexing_h;
+            prev_indexing_v = indexing_v;
+            prev_indexed_h = indexed_h;
+          }
+          counter++;
+          first_it = false;
         }
-        counter++;
-        first_it = false;
       }
     }
 
