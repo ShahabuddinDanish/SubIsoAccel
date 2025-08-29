@@ -415,14 +415,14 @@ int main(int argc, char** argv) {
 
     bool all_tests_passed = true;
 
-    // --- NEW: Loop through all tests from the file ---
+    /* Loop through all tests from the file */
     for (const auto& datagraph_entry : tests) {
         const std::string& datagraph = datagraph_entry.first;
         const std::vector<TestEntry>& queries = datagraph_entry.second;
 
-        std::cout << "\n========================================================" << std::endl;
+        std::cout << "\n================================================================" << std::endl;
         std::cout << "DATAGRAPH: " << datagraph << std::endl;
-        std::cout << "========================================================" << std::endl;
+        std::cout << "================================================================" << std::endl;
 
         for (const auto& test : queries) {
             std::cout << "\n--- Running Test ---" << std::endl;

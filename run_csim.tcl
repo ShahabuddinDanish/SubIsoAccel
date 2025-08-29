@@ -4,9 +4,10 @@ open_project -reset "subiso_csim_proj"
 # Add the kernel source files
 add_files "./source/logger.cpp"
 add_files "./source/cmdlineparser.cpp"
-add_files "./source/subgraphIsomorphism.cpp" -cflags "-std=c++11"
+add_files "./source/subgraphIsomorphism.cpp" -cflags "-std=c++17"
 add_files -tb "./source/tb-subiso.cpp"
-add_files -tb "./dataset_example" -cflags "-std=c++11"
+add_files -tb "./dataset_example"
+add_files -tb "./scripts"
 set_top subgraphIsomorphism
 
 # --- Solution Setup ---
