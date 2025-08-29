@@ -95,52 +95,51 @@ buildTableDescriptors(row_t* edge_buf,
     constexpr size_t LABELSRC_NODE = 64;
     constexpr size_t LABELDST_NODE = 96;
 
-    /* Filling information about query vertices and coping
-     * the vertex order needed by multiway join */
-FILL_ORDER_LOOP:
-    for (int g_word = 0; g_word < (numQueryVert + INSTR_PER_WORD - 1) / INSTR_PER_WORD; g_word++) {
-#pragma HLS pipeline II = INSTR_PER_WORD
-      row_t packed_instr = edge_buf[g_word]; // Read one 512-bit word
+    /* Filling information about query vertices and copying
+     * the vertex order needed by multiway join by processing
+     * all instructions (vertices and edged). */
+    row_t current_word;
+    const unsigned int total_instructions = numQueryVert + numQueryEdge;
 
-      // Inner loop to unpack instructions
-      for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
-#pragma HLS unroll
-        int g = g_word * INSTR_PER_WORD + g_unpack;
-        if (g < numQueryVert) {
-            ap_uint<INSTR_WIDTH> instr = packed_instr.range(INSTR_WIDTH * (g_unpack + 1) - 1, INSTR_WIDTH * g_unpack);
-            ap_uint<NODE_W> nodesrc = instr.range(SRC_NODE + NODE_W - 1, SRC_NODE);
-            fromNumToPos[nodesrc] = g;
+DESCRIPTOR_LOOP:
+    for (unsigned int i = 0; i < total_instructions; ++i) {
+#pragma HLS PIPELINE II=1
+
+        // Calculate which 512-bit word and which 128-bit slot this instruction is in
+        unsigned int word_idx = i / INSTR_PER_WORD;
+        unsigned int slot_idx = i % INSTR_PER_WORD;
+
+        // Only read a new 512-bit word from memory when at the beginning of one
+        if (slot_idx == 0) {
+            current_word = edge_buf[word_idx];
         }
-      }
-    }
 
-    /* Creating table descriptors */
-    unsigned int query_edge_word_offset = (numQueryVert + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
-CREATE_TABDESC_LOOP:
-    for (int s_word = 0; s_word < (numQueryEdge + INSTR_PER_WORD - 1) / INSTR_PER_WORD; s_word++) {
-#pragma HLS pipeline II = INSTR_PER_WORD
-      row_t packed_edge = edge_buf[query_edge_word_offset + s_word];
+        // Unpack the 128-bit instruction from its slot in the current 512-bit word
+        ap_uint<INSTR_WIDTH> instr = current_word.range(INSTR_WIDTH * (slot_idx + 1) - 1, INSTR_WIDTH * slot_idx);
 
-      for (int s_unpack = 0; s_unpack < INSTR_PER_WORD; s_unpack++) {
-#pragma HLS UNROLL
-        int s = s_word * INSTR_PER_WORD + s_unpack;
-        if (s < numQueryEdge) {
-          bool dirEdge = false;
-          ap_uint<8> index = 0;
-          ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (s_unpack + 1) - 1, INSTR_WIDTH * s_unpack);
+        /* Creating table descriptors. Logic is split based
+         * on whether it's a vertex or an edge instruction */
+        if (i < numQueryVert) {
+            // This is a vertex instruction (processing the matching order)
+            ap_uint<NODE_W> nodesrc = instr.range(SRC_NODE + NODE_W - 1, SRC_NODE);
+            fromNumToPos[nodesrc] = i;
+        } else {
+            // Edge instruction (processing a query edge)
+            bool dirEdge = false;
+            ap_uint<8> index = 0;
+            
+            ap_uint<LAB_W> labeldst = instr.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
+            ap_uint<LAB_W> labelsrc = instr.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
+            ap_uint<NODE_W> nodedst = instr.range(DST_NODE + NODE_W - 1, DST_NODE);
+            ap_uint<NODE_W> nodesrc = instr.range(SRC_NODE + NODE_W - 1, SRC_NODE);
+            unsigned short nodeSrcPos = fromNumToPos[nodesrc];
+            unsigned short nodeDstPos = fromNumToPos[nodedst];
 
-          ap_uint<LAB_W> labeldst = edge.range(LABELDST_NODE + LAB_W - 1, LABELDST_NODE);
-          ap_uint<LAB_W> labelsrc = edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
-          ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
-          ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
-          unsigned short nodeSrcPos = fromNumToPos[nodesrc];
-          unsigned short nodeDstPos = fromNumToPos[nodedst];
-    
-          // Direction of the table is used to understand if the
-          // source vertex is indexed or indexing the table
-          if (nodeSrcPos < nodeDstPos) {
-            dirEdge = true;
-          }
+            // Direction of the table is used to understand if the
+            // source vertex is indexed or indexing the table
+            if (nodeSrcPos < nodeDstPos) {
+                dirEdge = true;
+            }
 
 #ifndef __SYNTHESIS__
             std::cout << (unsigned int)nodesrc << "(" << (int)labelsrc << ")"
@@ -152,15 +151,11 @@ CREATE_TABDESC_LOOP:
           // which is indexed by [indexing label][indexed label]
           if (dirEdge) {
             index = labelToTable[labelsrc][labeldst];
-            if (index == 0) {
-              index = ++numTables;
-            }
+            if (index == 0) { index = ++numTables; }
             labelToTable[labelsrc][labeldst] = index;
           } else {
             index = labelToTable[labeldst][labelsrc];
-            if (index == 0) {
-              index = ++numTables;
-            }
+            if (index == 0) { index = ++numTables; }
             labelToTable[labeldst][labelsrc] = index;
           }
 
@@ -197,7 +192,6 @@ CREATE_TABDESC_LOOP:
             qVertices[nodeSrcPos].numTablesIndexed++;
           }
         }
-      }
     }
 }
 
@@ -264,6 +258,7 @@ BLOOM_READ_TASK_LOOP:
     bool first_it = true;
     counter = 0;
     unsigned int cycles = (hTables[ntb].n_edges >> 1) + 1;
+    //unsigned int cycles = (hTables[ntb].n_edges + EDGE_ROW - 1) / EDGE_ROW;
     unsigned int offset = hTables[ntb].start_edges;
 
     /* Read all the edges in a table and divide them by hash1 */
@@ -298,6 +293,12 @@ BLOOM_READ_TASK_LOOP:
           tuple_out.last = false;
           tuple_out.write = write;
           tuple_out.indexed_h = prev_indexed_h;
+#ifdef DEBUG_INTERFACE
+          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): address=%d\n", (unsigned int)tuple_out.address);
+          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
+          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): write=%d\n", (unsigned int)tuple_out.write);
+          hls::print("[bloomRead DEBUG] Sending TUPLE (edge of previous iteration): last=%d\n", (unsigned int)tuple_out.last);
+#endif
           stream_tuple_bloom_out.write(tuple_out);
 
           if (ntb == minTableIndex)
@@ -307,6 +308,11 @@ BLOOM_READ_TASK_LOOP:
             tuple_bagtoset_out.write = write;
             tuple_bagtoset_out.last = false;
             tuple_bagtoset_out.valid = true;
+#ifdef DEBUG_INTERFACE
+            hls::print("[bloomRead DEBUG] Sending TUPLE 1: v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
+            hls::print("[bloomRead DEBUG] Sending TUPLE 1: valid=%d\n",(unsigned int)tuple_bagtoset_out.valid);
+            hls::print("[bloomRead DEBUG] Sending TUPLE 1: last=%d\n", (unsigned int)tuple_bagtoset_out.last);
+#endif
             stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
           }
         }
@@ -329,6 +335,12 @@ BLOOM_READ_TASK_LOOP:
     tuple_out.indexed_h = prev_indexed_h;
     tuple_out.write = true;
     tuple_out.last = (ntb == (numTables - 1));
+#ifdef DEBUG_INTERFACE
+          hls::print("[bloomRead DEBUG] Sending TUPLE (last bloom filter): address=%d\n", (unsigned int)tuple_out.address);
+          hls::print("[bloomRead DEBUG] Sending TUPLE (last bloom filter): indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
+          hls::print("[bloomRead DEBUG] Sending TUPLE (last bloom filter): write=%d\n", (unsigned int)tuple_out.write);
+          hls::print("[bloomRead DEBUG] Sending TUPLE (last bloom filter): last=%d\n", (unsigned int)tuple_out.last);
+#endif
     stream_tuple_bloom_out.write(tuple_out);
 
     bagtoset_tuple_t<NODE_W> tuple_bagtoset_out;
@@ -336,6 +348,11 @@ BLOOM_READ_TASK_LOOP:
     tuple_bagtoset_out.write = true;
     tuple_bagtoset_out.valid = ntb == minTableIndex;
     tuple_bagtoset_out.last = (ntb == (numTables - 1));
+#ifdef DEBUG_INTERFACE
+    hls::print("[bloomRead DEBUG] Sending TUPLE 2: v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
+    hls::print("[bloomRead DEBUG] Sending TUPLE 2: valid=%d\n", (unsigned int)tuple_bagtoset_out.valid);
+    hls::print("[bloomRead DEBUG] Sending TUPLE 2: last=%d\n", (unsigned int)tuple_bagtoset_out.last);
+#endif
     stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
   }
 }
@@ -1357,11 +1374,24 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
               // Calculate the 512-bit word address and the 64-bit slot within it
               ap_uint<32> word_addr = edge_64bit_index / EDGES_PER_512_WORD;
               ap_uint<32> slot_index = edge_64bit_index % EDGES_PER_512_WORD;
-
+#ifdef DEBUG_INTERFACE
+              hls::print("[blockToHTB] Processing edge indexing_node: %d\n", (unsigned int)indexing_node);
+              hls::print("[blockToHTB] Processing edge indexed_node %d\n", (unsigned int)indexed_node);
+              hls::print("[blockToHTB] Target Address: word=%d\n", (unsigned int)word_addr);
+              hls::print("[blockToHTB] Target Address: slot=%d\n", (unsigned int)slot_index);
+#endif
               // Perform the read-modify-write
               row_t temp_word = htb_buf[word_addr];
+#ifdef DEBUG_INTERFACE              
+              hls::print("[blockToHTB] Word BEFORE modify [511:256]: %s\n", temp_word.range(511, 256).to_string(16).c_str());
+              hls::print("[blockToHTB] Word BEFORE modify [255:  0]: %s\n", temp_word.range(255, 0).to_string(16).c_str());
+#endif
               temp_word.range(64 * (slot_index + 1) - 1, 64 * slot_index) = indexing_node.concat(indexed_node);
               htb_buf[word_addr] = temp_word;
+#ifdef DEBUG_INTERFACE              
+              hls::print("[blockToHTB] Word AFTER modify [511:256]: %s\n", temp_word.range(511, 256).to_string(16).c_str());
+              hls::print("[blockToHTB] Word AFTER modify [255:  0]: %s\n", temp_word.range(255, 0).to_string(16).c_str());
+#endif
             }
           }
         }
