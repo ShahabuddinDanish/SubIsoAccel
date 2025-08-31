@@ -1661,9 +1661,18 @@ fillTablesURAM(row_t* edge_buf,
     unsigned long end_addr = numTables * htb_size;
 #endif
 
+#if DEBUG_STATS
+    hls::print("\n[fillTablesURAM]: STARTING.\n", 0);
+    hls::print("[fillTablesURAM]: Calculated htb_size (offset table words per graph table) = %u\n", (unsigned int)htb_size);
+#endif
+
 STORE_HASHTABLES_POINTER_LOOP:
     for (unsigned int ntb = 0; ntb < numTables; ntb++){
         hTables0[ntb].start_offset = start_addr;
+#if DEBUG_STATS
+        hls::print("[STORE_HASHTABLES_POINTER_LOOP]: Assigning to Table %d\n", ntb);
+        hls::print("[STORE_HASHTABLES_POINTER_LOOP]: Offset start address = %u\n", (unsigned int)start_addr);
+#endif
         start_addr += htb_size;
     }
     
@@ -1698,9 +1707,16 @@ COUNTER_TO_OFFSET_BLOCK_LOOP:
       labelToTable,
       numDataEdges,
       block_n_edges);
-    
+
+#if DEBUG_STATS
+    hls::print("[fillTablesURAM]: Address after offset tables = %u\n", (unsigned int)start_addr);
+#endif
     start_addr = (start_addr + (1UL << CACHE_WORDS_PER_LINE)) &
                  ~((1UL << CACHE_WORDS_PER_LINE) - 1);
+#if DEBUG_STATS
+    hls::print("[fillTablesURAM]: Address after alignment for edges = %u\n", (unsigned int)start_addr);
+#endif
+
     unsigned int prev_offset = 0;
 STORE_EDGES_POINTER_LOOP:
     for (unsigned short ntb = 0; ntb < numTables; ntb++) {
@@ -1708,7 +1724,17 @@ STORE_EDGES_POINTER_LOOP:
         unsigned int offset = block_n_edges[((ntb + 1) * block_per_table) - 1];
         hTables0[ntb].n_edges = offset - prev_offset;
         prev_offset = offset;
+#if DEBUG_STATS
+        hls::print("[STORE_EDGES_POINTER_LOOP]: Assigning to Table %d\n", ntb);
+        hls::print("[STORE_EDGES_POINTER_LOOP]: Assigning n_edges = %u\n", (unsigned int)hTables0[ntb].n_edges);
+        hls::print("[STORE_EDGES_POINTER_LOOP]: Assigning start_edges = %u\n", (unsigned int)start_addr);
+#endif
         start_addr += (hTables0[ntb].n_edges >> (ROW_LOG - EDGE_LOG)) + 1;
+#if DEBUG_STATS
+        unsigned int words_for_edges = (hTables0[ntb].n_edges >> (ROW_LOG - EDGE_LOG)) + 1;
+        hls::print("[STORE_EDGES_POINTER_LOOP]: Calculated words needed for edges = %u\n", words_for_edges);
+        hls::print("[STORE_EDGES_POINTER_LOOP]: Next start_addr = %u\n", (unsigned int)start_addr);
+#endif
         start_addr = (start_addr + (1UL << CACHE_WORDS_PER_LINE)) &
                      ~((1UL << CACHE_WORDS_PER_LINE) - 1);
 #ifndef __SYNTHESIS__
@@ -1752,6 +1778,9 @@ STORE_EDGES_POINTER_LOOP:
     //           MAX_CL>(
     //   hash1_w, n_candidate, start_addr, hTables0, qVertices, htb_buf);
 
+#if DEBUG_STATS
+    hls::print("[fillTablesURAM]: Final calculated start_candidate address = %u\n", (unsigned int)start_addr);
+#endif
     start_candidate = start_addr;
 #ifndef __SYNTHESIS__
     end_addr = start_addr * (1UL << (ROW_LOG - 3)) + ((numTables * ((1 << hash1_w) + 1)) << (BLOOM_LOG - 3));
@@ -1761,6 +1790,7 @@ STORE_EDGES_POINTER_LOOP:
 
 #if DEBUG_STATS
     debug::bloom_fullness /= numTables * (1UL << hash1_w) * (1UL << BLOOM_LOG) * (1UL << K_FUN_LOG);
+    hls::print("[fillTablesURAM] FINISHED.\n", 0);
 #endif /* DEBUG_STATS */
 }
 
