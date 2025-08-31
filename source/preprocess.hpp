@@ -1339,9 +1339,15 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
             
             ap_uint<32> addr_row_offset = (hTables[ntb].start_edges << 1) + offset;
 #if DEBUG_STATS
+            const int SLOTS_PER_WORD = 2; // 2x 64-bit slots in a 128-bit word
+            unsigned int word_addr = addr_row_offset / SLOTS_PER_WORD;
+            unsigned int slot_index = addr_row_offset % SLOTS_PER_WORD;
+
             hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)indexing_node);
             hls::print("%d)\n", (unsigned int)indexed_node);
             hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to htb_buf[%d]\n", (unsigned int)addr_row_offset);
+            hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to word address=%d\n", (unsigned int)word_addr);
+            hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to slot index=%d\n", (unsigned int)slot_index);
 #endif
             htb_p0[addr_row_offset] = indexing_node.concat(indexed_node);
         }
