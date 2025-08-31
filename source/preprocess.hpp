@@ -1041,7 +1041,8 @@ storeEdgesPerBlock(hls::stream<store_tuple_t<row_t> > stream_edge[2],
     tuple_in = stream_edge[select].read();
 #if DEBUG_STATS
     hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Address=%d\n", (unsigned int)tuple_in.address);
-    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Edge=%d\n", (unsigned int)tuple_in.edge);
+    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Edge=(%d, ", (unsigned int)tuple_in.edge.range(63, 32));
+    hls::print("%d)\n", (unsigned int)tuple_in.edge.range(31, 0));
     hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Stop=%d\n", (unsigned int)tuple_in.stop);
 #endif
     select = (select + 1) % 2;
@@ -1098,7 +1099,8 @@ STORE_EDGES_PER_BLOCK_LOOP:
         tuple_in = stream_edge[select].read();
 #if DEBUG_STATS
     hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received next tuple. Address=%d\n", (unsigned int)tuple_in.address);
-    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Edge=%d\n", (unsigned int)tuple_in.edge);
+    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Edge=(%d, ", (unsigned int)tuple_in.edge.range(63, 32));
+    hls::print("%d)\n", (unsigned int)tuple_in.edge.range(31, 0));
     hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Stop=%d\n", (unsigned int)tuple_in.stop);
 #endif
         select = (select + 1) % 2;
@@ -1107,6 +1109,9 @@ STORE_EDGES_PER_BLOCK_LOOP:
         assert(local_value_counter < UINT32_MAX);
 #endif
     }
+#if DEBUG_STATS
+    hls::print("[storeEdgesPerBlock]: FINISHED.\n", 0);
+#endif
 }
 
 template<size_t NODE_W,
@@ -1207,9 +1212,11 @@ COUNT_EDGES_INSIDE_BLOCK_LOOP:
             row_t edge = edge_buf[g + prev_offset];
 #if DEBUG_STATS
             ap_uint<NODE_W> ixg_node_val = edge.range(IXG_NODE + NODE_W - 1, IXG_NODE);
+            ap_uint<NODE_W> ixd_node_val = edge.range(IXD_NODE + NODE_W - 1, IXD_NODE);
             hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading edge %d\n", (unsigned int)g);
             hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading from scratchpad_buf[%d]\n", (unsigned int)(g + prev_offset));
             hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: ixg_node=%d\n", (unsigned int)ixg_node_val);
+            hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: ixd_node=%d\n", (unsigned int)ixd_node_val);
 #endif
             ap_uint<NODE_W> indexing_hash =
               edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
@@ -1355,6 +1362,7 @@ STORE_OFFSETS_BLOCK_LOOP:
             unsigned int dest_addr = g + (s * (1UL << (COUNTERS_PER_BLOCK - 2)));
             if (row != 0) { // Only print if there's data
               hls::print("[STORE_OFFSETS_BLOCK_LOOP]: Writing offsets to htb_buf[%d]\n", dest_addr);
+              hls::print("[STORE_OFFSETS_BLOCK_LOOP]: Content (hex): %s\n", row.to_string(16).c_str());
             }
 #endif
             htb_buf[g + (s * (1UL << (COUNTERS_PER_BLOCK - 2)))] = row;
