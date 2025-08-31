@@ -712,7 +712,8 @@ READ_EDGES_PER_BLOCK_LOOP:
     for (auto s_word = 0; s_word < num_data_words; s_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
 #if DEBUG_STATS
-      hls::print("[READ_EDGES_PER_BLOCK_LOOP]: Reading word %d\n", (unsigned int)s_word);
+      hls::print("[READ_EDGES_PER_BLOCK_LOOP]: Reading data from res_buf[%d]\n", (unsigned int)(s_word));
+      hls::print("[READ_EDGES_PER_BLOCK_LOOP]: Reading 512-bit memory word %d\n", (unsigned int)s_word);
 #endif
 
       row_t packed_edge = edge_buf[s_word]; // Read one 512-bit word
@@ -733,7 +734,7 @@ READ_EDGES_PER_BLOCK_LOOP:
 #if DEBUG_STATS
         hls::print("[READ_EDGES_PER_BLOCK_LOOP] Read data edge (%d, ", (unsigned int)nodesrc);
         hls::print("%d)\n", (unsigned int)nodedst);
-        hls::print("[READ_EDGES_PER_BLOCK_LOOP] Read data edge from res_buf[%d]\n", (unsigned int)(s_unpack));
+        hls::print("[READ_EDGES_PER_BLOCK_LOOP] Read data edge from res_buf word slot[%d]\n", (unsigned int)(s_unpack));
 #endif
 
           // Retrieve index of table with source as indexing vertex
@@ -1153,7 +1154,7 @@ STORE_EDGES_PER_BLOCK_LOOP:
         local_cache_valid[0] = true;
         block_n_edges[address] = local_value_counter + 1;
 #if DEBUG_STATS
-        hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Block=%d, ", (unsigned int)address);
+        hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Block=%d\n", (unsigned int)address);
         hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)tuple_in.edge.range(63, 32)); /*indexing_node*/
         hls::print("%d) to output stream.\n", (unsigned int)tuple_in.edge.range(31, 0)); /* indexed_node */
         hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge to scratchpad_buf[%d]\n", (unsigned int)local_value_counter);
@@ -1328,9 +1329,6 @@ INITIALIZE_URAM_LOOP:
 
 BLOCK_HTB_TOP_LOOP:
     for (auto s = 0; s < block_per_table * numTables; s++) {
-#if DEBUG_STATS
-        hls::print("BLOCK_TO_HTB: TOP_LOOP, processing block s=%d\n", (unsigned int)s);
-#endif
         auto block_edges = block_n_edges[s] - prev_offset;
         auto ntb = s >> (hash1_w + hash2_w - COUNTERS_PER_BLOCK);
         if (prev_ntb != ntb){
@@ -1354,7 +1352,6 @@ COUNT_EDGES_INSIDE_BLOCK_LOOP:
           ap_uint<NODE_W> ixg_node_val = packed_edge.range(IXG_NODE + NODE_W - 1, IXG_NODE);
           hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading packed edge word %d\n", (unsigned int)g_word);
           hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading from scratchpad_buf[%d]\n", (unsigned int)(g_word + prev_offset));
-          hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: ixg_node=%d\n", (unsigned int)ixg_node_val);
 #endif
           for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
 #pragma HLS unroll
@@ -1499,6 +1496,7 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
 #ifdef DEBUG_STATS
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)indexing_node);
               hls::print("%d)\n", (unsigned int)indexed_node);
+              hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to htb_buf[%d]\n", (unsigned int)edge_64bit_index);
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to word address=%d\n", (unsigned int)word_addr);
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to slot index=%d\n", (unsigned int)slot_index);
 #endif
