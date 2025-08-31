@@ -222,6 +222,11 @@ void bloomRead(AdjHT *hTables,
 // to start the partial solutions.
   unsigned int minSize = UINT32_MAX;
   unsigned short minTableIndex;
+
+#if DEBUG_STATS
+  hls::print("\n[bloomRead]: STARTING.\n", 0);
+#endif
+
 PROPOSE_TBINDEXING_LOOP:
   for (int g = 0; g < qVertices[0].numTablesIndexing; g++) {
     unsigned short tableIndex = qVertices[0].tables_indexing[g];
@@ -235,6 +240,10 @@ PROPOSE_TBINDEXING_LOOP:
 BLOOM_READ_TASK_LOOP:
   for (unsigned int ntb = 0; ntb < numTables; ntb++)
   {
+
+#if DEBUG_STATS
+      hls::print("[BLOOM_READ_TASK_LOOP]: Processing table %d\n", ntb);
+#endif
 
     /* During first iteration do not consider the difference between
     prev_indexing_h and indexing_h to be useful to write the bloom */
@@ -257,6 +266,12 @@ BLOOM_READ_TASK_LOOP:
         edge = row.range(((i + 1) << EDGE_LOG) - 1, i << EDGE_LOG);
         indexing_v = edge.range(NODE_W * 2 - 1, NODE_W);
         indexed_v = edge.range(NODE_W - 1, 0);
+#if DEBUG_STATS
+        hls::print("[BLOOM_READ_EDGES_BLOCK]: Unpacked edge from htb_buf[%d]\n", (unsigned int)(offset + start));
+        hls::print("[BLOOM_READ_EDGES_BLOCK]: Unpacked edge from slot %d\n", i);
+        hls::print("[BLOOM_READ_EDGES_BLOCK]: Unpacked edge: (%d, ", (unsigned int)indexing_v);
+        hls::print("%d)\n", (unsigned int)indexed_v);
+#endif
 
         hash_in0.write(indexed_v);
         hash_in1.write(indexing_v);
@@ -275,6 +290,12 @@ BLOOM_READ_TASK_LOOP:
           tuple_out.last = false;
           tuple_out.write = write;
           tuple_out.indexed_h = prev_indexed_h;
+#ifdef DEBUG_STATS
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (previous iteration edge), address=%d\n", (unsigned int)tuple_out.address);
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (previous iteration edge), indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (previous iteration edge), write=%d\n", (unsigned int)tuple_out.write);
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (previous iteration edge), last=%d\n", (unsigned int)tuple_out.last);
+#endif
           stream_tuple_bloom_out.write(tuple_out);
 
           if (ntb == minTableIndex)
@@ -284,6 +305,12 @@ BLOOM_READ_TASK_LOOP:
             tuple_bagtoset_out.write = write;
             tuple_bagtoset_out.last = false;
             tuple_bagtoset_out.valid = true;
+#ifdef DEBUG_STATS
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, write=%d\n", (unsigned int)tuple_bagtoset_out.write);
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, valid=%d\n", (unsigned int)tuple_bagtoset_out.valid);
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, last=%d\n", (unsigned int)tuple_bagtoset_out.last);
+#endif
             stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
           }
         }
@@ -306,6 +333,12 @@ BLOOM_READ_TASK_LOOP:
     tuple_out.indexed_h = prev_indexed_h;
     tuple_out.write = true;
     tuple_out.last = (ntb == (numTables - 1));
+#ifdef DEBUG_STATS
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), address=%d\n", (unsigned int)tuple_out.address);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), write=%d\n", (unsigned int)tuple_out.write);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), last=%d\n", (unsigned int)tuple_out.last);
+#endif
     stream_tuple_bloom_out.write(tuple_out);
 
     bagtoset_tuple_t<NODE_W> tuple_bagtoset_out;
@@ -313,8 +346,17 @@ BLOOM_READ_TASK_LOOP:
     tuple_bagtoset_out.write = true;
     tuple_bagtoset_out.valid = ntb == minTableIndex;
     tuple_bagtoset_out.last = (ntb == (numTables - 1));
+#ifdef DEBUG_STATS
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, write=%d\n", (unsigned int)tuple_bagtoset_out.write);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, valid=%d\n", (unsigned int)tuple_bagtoset_out.valid);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, last=%d\n", (unsigned int)tuple_bagtoset_out.last);
+#endif
     stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
   }
+#if DEBUG_INTERFACE
+  hls::print("[bloomRead]: FINISHED.\n", 0);
+#endif
 }
 
 template <size_t NODE_W,
@@ -328,11 +370,24 @@ void bagtoset(hls::stream<bagtoset_tuple_t<NODE_W> > &stream_tuple_in,
   ap_uint<MAX_CL> valid_bits = 0; // 1 if the element is present
   ap_uint<MAX_CL> equal_bits = 0; // 1 if the element is equal to the one in the bag
 
+#if DEBUG_STATS
+  hls::print("\n[bagtoset]: STARTING.\n", 0);
+#endif
+
 BAGTOSET_TASK_LOOP:
   do
   {
 #pragma HLS pipeline II = 2
+#if DEBUG_STATS
+    hls::print("[BAGTOSET_TASK_LOOP]: Waiting for a tuple from stream.\n", 0);
+#endif
     tuple_in = stream_tuple_in.read();
+#if DEBUG_STATS
+    hls::print("[BAGTOSET_TASK_LOOP]: Read tuple, v=%d\n", (unsigned int)tuple_in.indexing_v); 
+    hls::print("[BAGTOSET_TASK_LOOP]: Read tuple, valid=%d\n", (int)tuple_in.valid);
+    hls::print("[BAGTOSET_TASK_LOOP]: Read tuple, write=%d\n", (int)tuple_in.write);
+    hls::print("[BAGTOSET_TASK_LOOP]: Read tuple, last=%d\n", (int)tuple_in.last);
+#endif
 
     if (tuple_in.valid)
     {
@@ -353,12 +408,22 @@ BAGTOSET_TASK_LOOP:
         batch_tuple_t<NODE_W> tuple_out;
         tuple_out.indexing_v = tuple_in.indexing_v;
         tuple_out.last = false;
+#if DEBUG_STATS
+        hls::print("[BAGTOSET_TASK_LOOP]: Vertex %d is Unique. Writing downstream.\n", (unsigned int)tuple_in.indexing_v);
+#endif
         stream_tuple_out.write(tuple_out);
       }
-
+#if DEBUG_STATS
+      else {
+        hls::print("[BAGTOSET_TASK_LOOP]: Vertex %d is a Duplicate. Discarding.\n", (unsigned int)tuple_in.indexing_v);
+      }
+#endif
       // Last element of the hash set
       if (tuple_in.write)
       {
+#if DEBUG_STATS
+        hls::print("[BAGTOSET_TASK_LOOP]: Received 'write' flag. Resetting uniqueness filter.\n", 0);
+#endif
         pointer = 0;
         valid_bits = 0;
       }
@@ -369,7 +434,13 @@ BAGTOSET_TASK_LOOP:
   batch_tuple_t<NODE_W> tuple_out;
   tuple_out.indexing_v = tuple_in.indexing_v;
   tuple_out.last = true;
+#if DEBUG_STATS
+    hls::print("[bagtoset]: Forwarding final STOP signal downstream.\n", 0);
+#endif
   stream_tuple_out.write(tuple_out);
+#if DEBUG_STATS
+  hls::print("[bagtoset]: FINISHED.\n", 0);
+#endif
 }
 
 template <size_t NODE_LOG,
@@ -385,22 +456,53 @@ void batch(unsigned int &n_candidate,
   ap_uint<32> pointer = 0;
   unsigned int offset = 0;
 
+#if DEBUG_STATS
+  hls::print("\n[batch]: STARTING.\n", 0);
+  hls::print("[batch]: Writing candidate list starting at htb_buf[%d].\n", start_address);
+  hls::print("[batch]: Waiting to read first tuple from stream.\n", 0);
+#endif
   batch_tuple_t<NODE_W> tuple_in = stream_tuple_in.read();
+#if DEBUG_STATS
+  hls::print("[batch]: Read first tuple: { v=%d, ", (unsigned int)tuple_in.indexing_v);
+  hls::print("last=%d }.\n", (int)tuple_in.last);
+#endif
+
   while (!tuple_in.last)
   {
 #pragma HLS pipeline II = 1
+#if DEBUG_STATS
+    hls::print("[batch loop]: Processing candidate vertex: = %d\n", (unsigned int)tuple_in.indexing_v);
+#endif
     ap_uint<NODE_PER_WORD_LOG> in_word_pointer = pointer.range(NODE_PER_WORD_LOG - 1, 0);
     word.range(NODE_W * (in_word_pointer + 1) - 1, NODE_W * in_word_pointer) = tuple_in.indexing_v;
     if (in_word_pointer == (1UL << NODE_PER_WORD_LOG) - 1)
     {
+#if DEBUG_STATS
+      hls::print("[batch loop]: Word is full. Writing to htb_buf[%d].\n", (unsigned int)(start_address + offset));
+      hls::print("[batch loop]: Word is full. Content (hex): %s\n", word.to_string(16).c_str());
+#endif
       htb_buf[start_address + offset] = word;
       offset++;
     }
     pointer++;
+#if DEBUG_STATS
+    hls::print("[batch loop]: Waiting to read next tuple from stream.\n", 0);
+#endif
     tuple_in = stream_tuple_in.read();
+#if DEBUG_STATS
+  hls::print("[batch loop]: Read next tuple: { v=%d, ", (unsigned int)tuple_in.indexing_v);
+  hls::print("last=%d }.\n", (int)tuple_in.last);
+#endif
   };
+#if DEBUG_STATS
+  hls::print("[batch]: Loop finished. Writing final word to htb_buf[%d].\n", (unsigned int)(start_address + offset));
+  hls::print("[batch]: Content (hex): %s\n", word.to_string(16).c_str());
+#endif
   htb_buf[start_address + offset] = word;
   n_candidate = pointer;
+#if DEBUG_STATS
+    hls::print("[batch] FINISHED. Total candidates (n_candidate) = %u\n", (unsigned int)n_candidate);
+#endif
 }
 
 template<typename T_BLOOM,
@@ -452,16 +554,38 @@ void bloomWrite(T_BLOOM *bloom_p,
 {
   constexpr size_t K_FUN = (1UL << K_FUN_LOG);
   bloom_write_tuple_t tuple_in;
+#if DEBUG_STATS
+  hls::print("\n[bloomWrite]: STARTING.\n", 0);
+#endif
+
 BLOOM_WRITE_TASK_LOOP:
   do
   {
 #pragma HLS pipeline II = (1UL << K_FUN_LOG)
+#if DEBUG_STATS
+    hls::print("[BLOOM_WRITE_TASK_LOOP]: Waiting for address tuple.\n", 0);
+#endif
     tuple_in = stream_address.read();
+#if DEBUG_STATS
+    hls::print("[BLOOM_WRITE_TASK_LOOP]: Read tuple, address=%d\n", (unsigned int)tuple_in.address);
+    hls::print("[BLOOM_WRITE_TASK_LOOP]: Read tuple, last=%d\n", (int)tuple_in.last);
+#endif
+
     for (int g = 0; g < K_FUN; g++)
     {
 #pragma HLS unroll
+      T_BLOOM filter_data = stream_filter[g].read();
+#if DEBUG_STATS
+      unsigned int dest_addr = (tuple_in.address << K_FUN_LOG) + g;
+      hls::print("[BLOOM_WRITE_TASK_LOOP]: Writing Filter %d\n", g);
+      hls::print("[BLOOM_WRITE_TASK_LOOP]: Writing Filter to bloom_p[%d].\n", dest_addr);
+      hls::print("[BLOOM_WRITE_TASK_LOOP]: Filter Content (hex): %s\n", filter_data.to_string(16).c_str());
+#endif
+      bloom_p[(tuple_in.address << K_FUN_LOG) + g] = filter_data;
+/*
       bloom_p[(tuple_in.address << K_FUN_LOG) + g] =
           stream_filter[g].read();
+*/
 
 #if DEBUG_STATS
       /* Computing the number of ones in each filter*/
@@ -474,6 +598,9 @@ BLOOM_WRITE_TASK_LOOP:
 #endif /* DEBUG_STATS */
     }
   } while (!tuple_in.last);
+#if DEBUG_STATS
+    hls::print("[bloomWrite]: FINISHED.\n", 0);
+#endif
 }
 
 template <typename T_DDR,
@@ -560,10 +687,16 @@ readEdgesPerBlock(row_t* edge_buf,
     const unsigned int block_per_table = hash1_w + hash2_w - COUNTERS_PER_BLOCK;
     bool inverted = false;
 
+#if DEBUG_STATS
+    hls::print("\n[readEdgesPerBlock] STARTING. Will read %d words.\n", (unsigned int)numDataEdges);
+#endif
+
 READ_EDGES_PER_BLOCK_LOOP:
     for (auto s = 0; s < numDataEdges; s++) {
 #pragma HLS pipeline II = 1
-
+#if DEBUG_STATS
+      hls::print("[READ_EDGES_PER_BLOCK_LOOP]: Reading word %d\n", (unsigned int)s);
+#endif
         row_t edge = edge_buf[s];
 
         ap_uint<LAB_W> labeldst =
@@ -571,8 +704,13 @@ READ_EDGES_PER_BLOCK_LOOP:
         ap_uint<LAB_W> labelsrc =
           edge.range(LABELSRC_NODE + LAB_W - 1, LABELSRC_NODE);
         ap_uint<NODE_W> nodedst = edge.range(DST_NODE + NODE_W - 1, DST_NODE);
-        ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);
-        
+        ap_uint<NODE_W> nodesrc = edge.range(SRC_NODE + NODE_W - 1, SRC_NODE);  
+#if DEBUG_STATS
+        hls::print("[READ_EDGES_PER_BLOCK_LOOP] Read data edge (%d, ", (unsigned int)nodesrc);
+        hls::print("%d)\n", (unsigned int)nodedst);
+        //hls::print("[READ_EDGES_PER_BLOCK_LOOP] Read data edge from res_buf[%d]\n", (unsigned int)(dynfifo_space + s));
+        hls::print("[READ_EDGES_PER_BLOCK_LOOP] Read data edge from res_buf[%d]\n", (unsigned int)(s));
+#endif
         // Retrieve index of table with source as indexing vertex
         ap_uint<8> index0 = labelToTable[labelsrc][labeldst];
         // Retrieve index of table with destination as indexing vertex
@@ -604,23 +742,56 @@ READ_EDGES_PER_BLOCK_LOOP:
         /* This useless if is to explain to Vitis HLS 2022.2 that two write in
          * the same stream cannot happen in one cycle */
         if (index0 != 0 && index1 != 0) {
+#if DEBUG_STATS
+          hls::print("    -> Edge matches query in both directions. inverted=%d\n", (int)inverted);
+#endif
           if (inverted){
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[1]\n", (unsigned int)address0);
+#endif
             stream_address[1].write({ address0, false });
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[0]\n", (unsigned int)address1);
+#endif
             stream_address[0].write({ address1, false });
           } else {
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[0]\n", (unsigned int)address0);
+#endif
             stream_address[0].write({ address0, false });
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[1]\n", (unsigned int)address1);
+#endif
             stream_address[1].write({ address1, false });
           }
         } else if (index0 != 0){
+#if DEBUG_STATS
+          hls::print("    -> Edge matches query in forward direction. inverted=%d\n", (int)inverted);
+#endif
           if (inverted){
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[1]\n", (unsigned int)address0);
+#endif
             stream_address[1].write({ address0, false });
           } else {
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[0]\n", (unsigned int)address0);
+#endif
             stream_address[0].write({ address0, false });
           }
         } else if (index1 != 0){
+#if DEBUG_STATS
+          hls::print("    -> Edge matches query in reverse direction. inverted=%d\n", (int)inverted);
+#endif
           if (inverted){
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[1]\n", (unsigned int)address1);
+#endif
             stream_address[1].write({ address1, false });
           } else {
+#if DEBUG_STATS
+            hls::print("        Writing address %d to stream[0]\n", (unsigned int)address1);
+#endif
             stream_address[0].write({ address1, false });
           }
         }
@@ -630,8 +801,14 @@ READ_EDGES_PER_BLOCK_LOOP:
         }
     }
     if (inverted){
+#if DEBUG_STATS
+      hls::print("[readEdgesPerBlock] FINISHED: Sending STOP signal to stream[1]\n");
+#endif
       stream_address[1].write({ 0, true });
     } else {
+#if DEBUG_STATS
+      hls::print("[readEdgesPerBlock] FINISHED: Sending STOP signal to stream[0]\n");
+#endif
       stream_address[0].write({ 0, true });
     }
 }
@@ -858,8 +1035,17 @@ storeEdgesPerBlock(hls::stream<store_tuple_t<row_t> > stream_edge[2],
     store_tuple_t<row_t> tuple_in;
     auto select = 0;
     
+#if DEBUG_STATS
+    hls::print("\n[storeEdgesPerBlock] STARTING. Waiting to read first tuple from stream %d\n", (unsigned int)select);
+#endif
     tuple_in = stream_edge[select].read();
+#if DEBUG_STATS
+    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Address=%d\n", (unsigned int)tuple_in.address);
+    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Edge=%d\n", (unsigned int)tuple_in.edge);
+    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Stop=%d\n", (unsigned int)tuple_in.stop);
+#endif
     select = (select + 1) % 2;
+
 STORE_EDGES_PER_BLOCK_LOOP:
     while (!tuple_in.stop) {
 #pragma HLS dependence variable = block_n_edges type = inter direction =       \
@@ -900,8 +1086,21 @@ STORE_EDGES_PER_BLOCK_LOOP:
         local_cache_counter[0] = local_value_counter + 1;
         local_cache_valid[0] = true;
         block_n_edges[address] = local_value_counter + 1;
+#if DEBUG_STATS
+        hls::print("[STORE_EDGES_PER_BLOCK_LOOP] Writing edge (%d, ", (unsigned int)tuple_in.edge.range(63, 32)); /*indexing_node*/
+        hls::print("%d)\n", (unsigned int)tuple_in.edge.range(31, 0)); /* indexed_node */
+        hls::print("[STORE_EDGES_PER_BLOCK_LOOP] Writing edge to scratchpad_buf[%d]\n", (unsigned int)local_value_counter);
+#endif
         m_axi[local_value_counter] = tuple_in.edge;
+#if DEBUG_STATS
+    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Waiting to read next tuple from stream %d\n", (unsigned int)select);
+#endif
         tuple_in = stream_edge[select].read();
+#if DEBUG_STATS
+    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received next tuple. Address=%d\n", (unsigned int)tuple_in.address);
+    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Edge=%d\n", (unsigned int)tuple_in.edge);
+    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Stop=%d\n", (unsigned int)tuple_in.stop);
+#endif
         select = (select + 1) % 2;
 
 #ifndef __SYNTHESIS__
@@ -972,6 +1171,10 @@ blockToHTB(row_t* edge_buf,
 
     ap_uint<64> *htb_p0 = (ap_uint<64> *)htb_buf;
 
+#if DEBUG_STATS
+    hls::print("\n[blockToHTB]: STARTING.\n", 0);
+#endif
+
 /* Loop 2^(COUNTERS_PER_BLOCK - 2) since one block is split in two memories and
  * every memroy keep two counters per line*/
 INITIALIZE_URAM_LOOP:
@@ -991,12 +1194,23 @@ BLOCK_HTB_TOP_LOOP:
         if (prev_ntb != ntb){
             base_address = 0;
         }
+#if DEBUG_STATS
+        hls::print("[BLOCK_HTB_TOP_LOOP]: Processing block s=%d\n", (unsigned int)s);
+        hls::print("[BLOCK_HTB_TOP_LOOP]: Processing block for Table ntb=%d\n", (unsigned int)ntb);
+        hls::print("[BLOCK_HTB_TOP_LOOP]: Total block edges=%d\n", (unsigned int)block_edges);
+        hls::print("[BLOCK_HTB_TOP_LOOP]: PASS 1. Counting edges into on-chip URAMs.\n", 0);
+#endif
 
 COUNT_EDGES_INSIDE_BLOCK_LOOP:
         for (auto g = 0; g < block_edges; g++) {
 #pragma HLS pipeline II = 2
             row_t edge = edge_buf[g + prev_offset];
-
+#if DEBUG_STATS
+            ap_uint<NODE_W> ixg_node_val = edge.range(IXG_NODE + NODE_W - 1, IXG_NODE);
+            hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading edge %d\n", (unsigned int)g);
+            hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading from scratchpad_buf[%d]\n", (unsigned int)(g + prev_offset));
+            hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: ixg_node=%d\n", (unsigned int)ixg_node_val);
+#endif
             ap_uint<NODE_W> indexing_hash =
               edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
             ap_uint<NODE_W> indexed_hash =
@@ -1060,6 +1274,9 @@ COUNTERS_TO_OFFSETS_URAM_LOOP:
             block_counter1[g] = offset1;
         }
 
+#if DEBUG_STATS
+        hls::print("[BLOCK_HTB_TOP_LOOP]: PASS 2. Scattering edges into final htb_buf locations.\n", 0);
+#endif
 STORE_EDGES_INSIDE_BLOCK_LOOP:
         for (auto g = 0; g < block_edges; g++) {
 #pragma HLS pipeline II = 2
@@ -1114,11 +1331,19 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
             block_counter0[(address >> 2)] = row_offset0;
             
             ap_uint<32> addr_row_offset = (hTables[ntb].start_edges << 1) + offset;
+#if DEBUG_STATS
+            hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)indexing_node);
+            hls::print("%d)\n", (unsigned int)indexed_node);
+            hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to htb_buf[%d]\n", (unsigned int)addr_row_offset);
+#endif
             htb_p0[addr_row_offset] = indexing_node.concat(indexed_node);
         }
 
         /* Store the block counters, packing them in a row */
         row_t row;
+#if DEBUG_STATS
+        hls::print("[BLOCK_HTB_TOP_LOOP]: Storing offset tables into htb_buf.\n");
+#endif
 STORE_OFFSETS_BLOCK_LOOP:
         for (auto g = 0; g < (1UL << (COUNTERS_PER_BLOCK - 2)); g++) {
 #pragma HLS pipeline II = 1
@@ -1126,11 +1351,20 @@ STORE_OFFSETS_BLOCK_LOOP:
             row.range(127, 64) = block_counter1[g];
             block_counter0[g] = 0;
             block_counter1[g] = 0;
+#if DEBUG_STATS
+            unsigned int dest_addr = g + (s * (1UL << (COUNTERS_PER_BLOCK - 2)));
+            if (row != 0) { // Only print if there's data
+              hls::print("[STORE_OFFSETS_BLOCK_LOOP]: Writing offsets to htb_buf[%d]\n", dest_addr);
+            }
+#endif
             htb_buf[g + (s * (1UL << (COUNTERS_PER_BLOCK - 2)))] = row;
         }
         prev_offset = block_n_edges[s];
         prev_ntb = ntb;
     }
+#if DEBUG_STATS
+    hls::print("[blockToHTB] FINISHED.\n", 0);
+#endif
 }
 
 template<typename T_CNT,
@@ -1603,6 +1837,31 @@ INITIALIZE_LABELTOTABLE_LOOP:
                                hash1_w,
                                hash2_w);
 
+#if DEBUG_STATS
+    hls::print("\n--- FINAL PREPROCESSING RESULTS ---\n", 0);
+    hls::print("Final n_candidate = %d\n", n_candidate);
+    hls::print("Candidate list starts at htb_buf[%d]\n\n", start_candidate);
+
+    hls::print("--- hTables Contents ---\n", 0);
+    for (int i = 0; i < numTables; ++i) {
+      hls::print("Table %d\n", i);
+      hls::print("start_offset=%u\n", (unsigned int)hTables0[i].start_offset);
+      hls::print("start_edges=%u\n", (unsigned int)hTables0[i].start_edges);
+      hls::print("n_edges=%u\n", (unsigned int)hTables0[i].n_edges);
+    }
+
+    hls::print("\n--- qVertices Contents ---\n");
+    for (int i = 0; i < numQueryVert; ++i) {
+      hls::print("qVertex %d\n", i);
+      hls::print("numTablesIndexed=%d\n", (int)qVertices[i].numTablesIndexed);
+      hls::print("numTablesIndexing=%d\n", (int)qVertices[i].numTablesIndexing);
+      for (int j = 0; j < qVertices[i].numTablesIndexed; ++j) {
+        hls::print("Indexed by v%d\n", (int)qVertices[i].vertex_indexing[j]);
+        hls::print("In Table %d\n", (int)qVertices[i].tables_indexed[j]);
+      }
+    }
+    hls::print("--- END OF PREPROCESSING ---\n\n", 0);
+#endif
 }
 
 #pragma GCC diagnostic pop

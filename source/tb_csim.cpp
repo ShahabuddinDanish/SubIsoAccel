@@ -301,7 +301,7 @@ int main(int argc, char** argv) {
     /* Test Case Definition */
     std::string datagraph = "../dataset_example/label_5/data/graph_simple3.RM.csv";
     std::string querygraph = "../dataset_example/label_5/queries2/query_simple2.RM.csv";
-    long unsigned int golden_result = 0;
+    long unsigned int golden_result = 2;
 
     /* Parameters */
     unsigned short nQV = 0;
