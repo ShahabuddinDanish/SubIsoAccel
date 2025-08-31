@@ -1488,7 +1488,7 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
               block_counter0[(address >> 2)] = row_offset0;
 
               const int EDGES_PER_512_WORD = DDR_WORD / 64; // Should be 8 at 512 bits
-              ap_uint<32> edge_64bit_index = (hTables[ntb].start_edges << 1) + offset;
+              ap_uint<32> edge_64bit_index = (hTables[ntb].start_edges * EDGE_ROW) + offset;
 
               // Calculate the 512-bit word address and the 64-bit slot within it
               ap_uint<32> word_addr = edge_64bit_index / EDGES_PER_512_WORD;
