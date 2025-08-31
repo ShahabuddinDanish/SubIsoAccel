@@ -1,6 +1,6 @@
 #../dataset_example/label_5/data/graph_simple.RM.csv              ../dataset_example/label_5/queries2/query_simple.RM.csv 8 9 5
 #../dataset_example/label_5/data/graph_simple2.RM.csv             ../dataset_example/label_5/queries2/query_simple.RM.csv 8 9 5
-../dataset_example/label_5/data/graph_simple3.RM.csv             ../dataset_example/label_5/queries2/query_simple2.RM.csv 0 0 0
+../dataset_example/label_5/data/graph_simple3.RM.csv             ../dataset_example/label_5/queries2/query_simple2.RM.csv 2 0 0
 #../dataset_example/label_5/data/enron.RM.csv                     ../dataset_example/label_5/queries2/query0.RM.csv 35096     13  6
 #../dataset_example/label_5/data/enron.RM.csv                     ../dataset_example/label_5/queries2/query1.RM.csv 1148460     14  5
 #../dataset_example/label_5/data/enron.RM.csv                     ../dataset_example/label_5/queries2/query2.RM.csv 2018085     14  5

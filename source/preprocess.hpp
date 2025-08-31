@@ -1547,8 +1547,10 @@ STORE_OFFSETS_BLOCK_LOOP:
                 int word_addr = g / COUNTER_WORDS_PER_512;
 #if DEBUG_STATS
                 unsigned int dest_addr = word_addr + (s * (NUM_COUNTER_WORDS / COUNTER_WORDS_PER_512));
-                if (row != 0) { // Only print if there's data
+                if (packed_counters != 0) { // Only print if there's data
                   hls::print("[STORE_OFFSETS_BLOCK_LOOP]: Writing offsets to htb_buf[%d]\n", dest_addr);
+                  hls::print("[STORE_OFFSETS_BLOCK_LOOP]: Content [511:256]: %s\n", packed_counters.range(511, 256).to_string(16).c_str());
+                  hls::print("[STORE_OFFSETS_BLOCK_LOOP]: Content [255:  0]: %s\n", packed_counters.range(255, 0).to_string(16).c_str());
                 }
 #endif
                 htb_buf[word_addr + (s * (NUM_COUNTER_WORDS / COUNTER_WORDS_PER_512))] = packed_counters;
