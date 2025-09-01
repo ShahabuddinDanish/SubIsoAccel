@@ -1196,19 +1196,23 @@ void packAndStoreEdges(hls::stream<processed_edge_t>& stream_in,
     unsigned int write_address = 0;
     bool stop = false;
 
+#if DEBUG_STATS
+    hls::print("\n[packAndStoreEdges] STARTING.\n", 0);
+#endif
+
 PACK_LOOP:
     while(!stop) {
 #pragma HLS pipeline II=1
         
 #if DEBUG_STATS
-        hls::print("[packAndStoreEdges PACK_LOOP]: Waiting to read edge.\n", 0);
+        hls::print("[PACK_LOOP]: Waiting to read edge.\n", 0);
 #endif
 
         // Use a non-blocking read for next 128-bit processed edge from the stream or read the stop signal
         processed_edge_t edge;
         if (stream_in.read_nb(edge)) {
 #if DEBUG_STATS
-          hls::print("[packAndStoreEdges PACK_LOOP]: Read successful.\n", 0);
+          hls::print("[PACK_LOOP]: Read edge from stream. Packing into slot %d.\n", pack_counter);
 #endif
           // Place the edge into the correct slot in 512-bit buffer
           packing_buffer.range(INSTR_WIDTH * (pack_counter + 1) - 1, INSTR_WIDTH * pack_counter) = edge;
@@ -1217,7 +1221,7 @@ PACK_LOOP:
           // If the buffer is full, write it to DDR and reset.
           if (pack_counter == INSTR_PER_WORD) {
 #if DEBUG_STATS
-              hls::print("[packAndStoreEdges PACK_LOOP]: Writing full 512-bit word to address %d\n", write_address);
+              hls::print("[PACK_LOOP]: Word is full. Writing full 512-bit word to scratchpad_buf[%d]\n", write_address);
 #endif
               m_axi[write_address] = packing_buffer;
               write_address++;
@@ -1225,6 +1229,9 @@ PACK_LOOP:
           }
         } else {
               // If the data stream is empty, check for the stop signal
+#if DEBUG_STATS
+              hls::print("[PACK_LOOP]: Checking for Stop SIGNAL.\n");
+#endif
               stream_in_stop.read_nb(stop);
         }
     }
@@ -1236,8 +1243,14 @@ PACK_LOOP:
 #pragma HLS unroll
             packing_buffer.range(INSTR_WIDTH * (i + 1) - 1, INSTR_WIDTH * i) = 0;
         }
+#if DEBUG_STATS
+        hls::print("[packAndStoreEdges]: Loop finished. Writing final partial word to scratchpad_buf[%d].\n", write_address);
+#endif
         m_axi[write_address] = packing_buffer;
     }
+#if DEBUG_STATS
+    hls::print("[packAndStoreEdges] FINISHED.\n", 0);
+#endif
 }
 
 template<size_t NODE_W,
