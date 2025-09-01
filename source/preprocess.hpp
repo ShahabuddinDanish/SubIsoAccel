@@ -839,7 +839,8 @@ READ_EDGES_PER_BLOCK_LOOP:
         }
       }
     }
-    
+
+/*
     if (inverted){
 #if DEBUG_STATS
       hls::print("[readEdgesPerBlock] FINISHED: Sending STOP signal to stream[1]\n");
@@ -851,6 +852,12 @@ READ_EDGES_PER_BLOCK_LOOP:
 #endif
       stream_address[0].write({ 0, true });
     }
+*/
+  // Send a stop signal to BOTH consumer streams to prevent deadlock
+  hls::print("[readEdgesPerBlock] FINISHED: Sending STOP signal to stream[0]\n");
+  stream_address[0].write({0, true});
+  hls::print("[readEdgesPerBlock] FINISHED: Sending STOP signal to stream[1]\n");
+  stream_address[1].write({0, true});
 }
 
 template<size_t NODE_W,
@@ -866,92 +873,85 @@ countEdgesPerBlock(hls::stream<counter_tuple_t> stream_address[2],
     unsigned int local_cache_address[BRAM_LAT];
     unsigned int local_cache_counter[BRAM_LAT];
     ap_uint<BRAM_LAT> local_cache_valid = 0;
-    counter_tuple_t tuple_in;
-    auto select = 0;
+    int stopped_streams = 0;
 
 #if DEBUG_STATS
-    hls::print("[countEdgesPerBlock]: Starting to read from stream %d\n", (unsigned int)select);
-    hls::print("[countEdgesPerBlock]: Waiting for first tuple.\n", 0);
+    hls::print("\n[countEdgesPerBlock]: STARTING.\n", 0);
 #endif
-
-    tuple_in = stream_address[select].read();
-
-#if DEBUG_STATS
-    hls::print("[countEdgesPerBlock]: Received first tuple.\n", 0);
-    hls::print("[countEdgesPerBlock]: Read successful. Stop=%d\n", (unsigned int)tuple_in.stop);
-#endif
-
-    select = (select + 1) % 2;
 
 COUNT_EDGES_PER_BLOCK_LOOP:
-    while (!tuple_in.stop) {
+    while (stopped_streams < 2) {
 #pragma HLS dependence variable = block_n_edges type = inter direction =       \
   RAW false
 #pragma HLS pipeline II = 1
 
-        unsigned int address = tuple_in.address;
-
-#if DEBUG_STATS
-        hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Processing address %d\n", (unsigned int)address);
-#endif
-
-        bool hit = false;
-        unsigned int local_value_counter = 0;
-
-        /* Check if the counter has been used recently, by cycling backword to
-         * catch the updated value */
-        for (auto s = 0; s < BRAM_LAT; s++) {
+        /* On each cycle, try to read from both streams */
+        for (int i = 0; i < 2; i++) {
 #pragma HLS unroll
-            auto g = BRAM_LAT - s - 1;
-            if (local_cache_address[g] == address && local_cache_valid[g]) {
-                hit = true;
-                local_value_counter = local_cache_counter[g];
+            counter_tuple_t tuple_in;
+            if (stream_address[i].read_nb(tuple_in)) {
+#if DEBUG_STATS
+                hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Read from stream[%d]\n", i);
+                hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Read addr=%u\n", (unsigned int)tuple_in.address);
+                hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Read stop=%d\n", (int)tuple_in.stop);
+#endif
+                if (tuple_in.stop) {
+                    stopped_streams++;
+#if DEBUG_STATS
+                    hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: STOP signal received from stream[%d]\n", i);
+                    hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Total stopped: %d\n", stopped_streams);
+#endif
+                } else {
+                    unsigned int address = tuple_in.address;
+#if DEBUG_STATS
+                    hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Processing address %d\n", (unsigned int)address);
+#endif
+                    bool hit = false;
+                    unsigned int local_value_counter = 0;
+
+                    /* Check if the counter has been used recently, by cycling backword to
+                    * catch the updated value */
+                    for (auto s = 0; s < BRAM_LAT; s++) {
+#pragma HLS unroll
+                        auto g = BRAM_LAT - s - 1;
+                        if (local_cache_address[g] == address && local_cache_valid[g]) {
+                            hit = true;
+                            local_value_counter = local_cache_counter[g];
+                        }
+                    }
+
+                    /* Read from memory only if is not present in local cache, in this way
+                    * it is possible to remove the RAW dependency */
+                    if (hit){
+                      local_value_counter++;
+                    } else {
+                      local_value_counter = block_n_edges[address];
+                      local_value_counter++;
+                    }
+
+                    /* Shift everything by one position and writes the last one in memory */
+                    for (auto s = 0; s < BRAM_LAT - 1; s++) {
+#pragma HLS unroll
+                      auto g = BRAM_LAT - s - 1;
+                      local_cache_address[g] = local_cache_address[g - 1];
+                      local_cache_counter[g] = local_cache_counter[g - 1];
+                      local_cache_valid[g] = local_cache_valid[g - 1];
+                    }
+                    local_cache_address[0] = address;
+                    local_cache_counter[0] = local_value_counter;
+                    local_cache_valid[0] = true;
+                    block_n_edges[address] = local_value_counter;
+#ifndef __SYNTHESIS__
+                    assert(local_value_counter < UINT32_MAX);
+#endif
+                  }
             }
         }
-
-        /* Read from memory only if is not present in local cache, in this way
-         * it is possible to remove the RAW dependency */
-        if (hit){
-          local_value_counter++;
-        } else {
-          local_value_counter = block_n_edges[address];
-          local_value_counter++;
-        }
-
-        /* Shift everything by one position and writes the last one in memory */
-        for (auto s = 0; s < BRAM_LAT - 1; s++) {
-#pragma HLS unroll
-          auto g = BRAM_LAT - s - 1;
-          local_cache_address[g] = local_cache_address[g - 1];
-          local_cache_counter[g] = local_cache_counter[g - 1];
-          local_cache_valid[g] = local_cache_valid[g - 1];
-        }
-        local_cache_address[0] = address;
-        local_cache_counter[0] = local_value_counter;
-        local_cache_valid[0] = true;
-        block_n_edges[address] = local_value_counter;
-
-#if DEBUG_STATS
-        hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Starting to read from stream %d\n", (unsigned int)select);
-#endif
-
-        tuple_in = stream_address[select].read();
-
-#if DEBUG_STATS
-        hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Read successful. Stop=%d\n", (unsigned int)tuple_in.stop);
-#endif
-
-        select = (select + 1) % 2;
-
-#ifndef __SYNTHESIS__
-        assert(local_value_counter < UINT32_MAX);
-#endif
     }
 
 #if DEBUG_STATS
-    hls::print("[COUNT_EDGES_PER_BLOCK_LOOP]: Loop finished. Final tuple stop flag was %d\n", (unsigned int)tuple_in.stop);
+    hls::print("[countEdgesPerBlock]: FINISHED. Both streams stopped.\n", 0);
 #endif
-
 }
 
 template<size_t NODE_W,
@@ -1089,11 +1089,17 @@ STORE_EDGE_PER_BLOCK_LOOP:
         }
     }
 
-    if (inverted) {
-        stream_edge[1].write({ 0, 0, true });
-    } else {
-        stream_edge[0].write({ 0, 0, true });
-    }
+    // if (inverted) {
+    //     stream_edge[1].write({ 0, 0, true });
+    // } else {
+    //     stream_edge[0].write({ 0, 0, true });
+    // }
+
+  // Send a stop signal to BOTH consumer streams to prevent deadlock
+  hls::print("[readAndStreamEdgesPerBlock] FINISHED: Sending STOP signal to stream[0]\n");
+  stream_edge[0].write({ 0, 0, true });
+  hls::print("[readAndStreamEdgesPerBlock] FINISHED: Sending STOP signal to stream[1]\n");
+  stream_edge[1].write({ 0, 0, true });
 }
 
 template<size_t NODE_W,
@@ -1111,94 +1117,96 @@ storeEdgesPerBlock(hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2],
     unsigned int local_cache_address[BRAM_LAT];
     unsigned int local_cache_counter[BRAM_LAT];
     ap_uint<BRAM_LAT> local_cache_valid = 0;
-    store_tuple_t<processed_edge_t> tuple_in;
-    auto select = 0;
+    int stopped_streams = 0;
 
 #if DEBUG_STATS
-    hls::print("\n[storeEdgesPerBlock] STARTING. Waiting to read first tuple from stream %d\n", (unsigned int)select);
+    hls::print("\n[storeEdgesPerBlock] STARTING.\n", 0);
 #endif
-    tuple_in = stream_edge[select].read();
-#if DEBUG_STATS
-    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Address=%d\n", (unsigned int)tuple_in.address);
-    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Edge=(%d, ", (unsigned int)tuple_in.edge.range(63, 32));
-    hls::print("%d)\n", (unsigned int)tuple_in.edge.range(31, 0));
-    hls::print("[storeEdgesPerBlock]: Read successful, received first tuple. Stop=%d\n", (unsigned int)tuple_in.stop);
-#endif
-    select = (select + 1) % 2;
 
 STORE_EDGES_PER_BLOCK_LOOP:
-    while (!tuple_in.stop) {
+    while (stopped_streams < 2) {
 #pragma HLS dependence variable = block_n_edges type = inter direction =       \
   RAW false
 #pragma HLS pipeline II = 1
 
-        unsigned int address = tuple_in.address;
-
-        bool hit = false;
-        unsigned int local_value_counter = 0;
-
-        /* Check if the counter has been used recently, by cycling backword to
-         * catch the updated value */
-        for (auto s = 0; s < BRAM_LAT; s++) {
+        for (int i = 0; i < 2; i++) {
 #pragma HLS unroll
-            auto g = BRAM_LAT - s - 1;
-            if (local_cache_address[g] == address && local_cache_valid[g]) {
-                hit = true;
-                local_value_counter = local_cache_counter[g];
+            store_tuple_t<processed_edge_t> tuple_in;
+            if (stream_edge[i].read_nb(tuple_in)) {
+#if DEBUG_STATS
+                hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read from stream[%d]\n", i);
+                hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Address=%d\n", (unsigned int)tuple_in.address);
+                hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Edge=(%d, ", (unsigned int)tuple_in.edge.range(63, 32));
+                hls::print("%d)\n", (unsigned int)tuple_in.edge.range(31, 0));
+                hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Stop=%d\n", (unsigned int)tuple_in.stop);
+#endif
+                if (tuple_in.stop) {
+                    stopped_streams++;
+#if DEBUG_STATS
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: STOP signal received from stream[%d]\n", i);
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Total stopped: %d\n", stopped_streams);
+#endif
+                } else {
+                    unsigned int address = tuple_in.address;
+#if DEBUG_STATS
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Processing address %d\n", (unsigned int)address);
+#endif
+                    bool hit = false;
+                    unsigned int local_value_counter = 0;
+
+                    /* Check if the counter has been used recently, by cycling backword to
+                    * catch the updated value */
+                    for (auto s = 0; s < BRAM_LAT; s++) {
+#pragma HLS unroll
+                      auto g = BRAM_LAT - s - 1;
+                      if (local_cache_address[g] == address && local_cache_valid[g]) {
+                          hit = true;
+                          local_value_counter = local_cache_counter[g];
+                      }
+                    }
+
+                    /* Read from memory only if is not present in local cache, in this way
+                    * it is possible to remove the RAW dependency */
+                    if (!hit){
+                      local_value_counter = block_n_edges[address];
+                    }
+
+                    /* Shift everything by one position and writes the last one in memory */
+                    for (auto s = 0; s < BRAM_LAT - 1; s++) {
+#pragma HLS unroll
+                      auto g = BRAM_LAT - s - 1;
+                      local_cache_address[g] = local_cache_address[g - 1];
+                      local_cache_counter[g] = local_cache_counter[g - 1];
+                      local_cache_valid[g] = local_cache_valid[g - 1];
+                    }
+
+                    local_cache_address[0] = address;
+                    local_cache_counter[0] = local_value_counter + 1;
+                    local_cache_valid[0] = true;
+                    block_n_edges[address] = local_value_counter + 1;
+#if DEBUG_STATS
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Block=%d\n", (unsigned int)address);
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)tuple_in.edge.range(63, 32)); /*indexing_node*/
+                    hls::print("%d) to output stream.\n", (unsigned int)tuple_in.edge.range(31, 0)); /* indexed_node */
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge to scratchpad_buf[%d]\n", (unsigned int)local_value_counter);
+#endif
+                    stream_out.write(tuple_in.edge);
+#ifndef __SYNTHESIS__
+                    assert(local_value_counter < UINT32_MAX);
+#endif
+                  }
             }
         }
-
-        /* Read from memory only if is not present in local cache, in this way
-         * it is possible to remove the RAW dependency */
-        if (!hit){
-          local_value_counter = block_n_edges[address];
-        }
-
-        /* Shift everything by one position and writes the last one in memory */
-        for (auto s = 0; s < BRAM_LAT - 1; s++) {
-#pragma HLS unroll
-          auto g = BRAM_LAT - s - 1;
-          local_cache_address[g] = local_cache_address[g - 1];
-          local_cache_counter[g] = local_cache_counter[g - 1];
-          local_cache_valid[g] = local_cache_valid[g - 1];
-        }
-
-        local_cache_address[0] = address;
-        local_cache_counter[0] = local_value_counter + 1;
-        local_cache_valid[0] = true;
-        block_n_edges[address] = local_value_counter + 1;
-#if DEBUG_STATS
-        hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Block=%d\n", (unsigned int)address);
-        hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)tuple_in.edge.range(63, 32)); /*indexing_node*/
-        hls::print("%d) to output stream.\n", (unsigned int)tuple_in.edge.range(31, 0)); /* indexed_node */
-        hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge to scratchpad_buf[%d]\n", (unsigned int)local_value_counter);
-#endif
-        stream_out.write(tuple_in.edge);
-
-#if DEBUG_STATS
-    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Waiting to read next tuple from stream %d\n", (unsigned int)select);
-#endif
-        tuple_in = stream_edge[select].read();
-#if DEBUG_STATS
-    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received next tuple. Address=%d\n", (unsigned int)tuple_in.address);
-    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Edge=(%d, ", (unsigned int)tuple_in.edge.range(63, 32));
-    hls::print("%d)\n", (unsigned int)tuple_in.edge.range(31, 0));
-    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Read successful, received first tuple. Stop=%d\n", (unsigned int)tuple_in.stop);
-#endif
-        select = (select + 1) % 2;
-
-#ifndef __SYNTHESIS__
-        assert(local_value_counter < UINT32_MAX);
-#endif
     }
+        /* Both input streams are confirmed empty, send the stop signal downstream */
 #if DEBUG_STATS
     hls::print("[storeEdgesPerBlock]: Loop finished. Sending STOP signal downstream.\n");
 #endif
-    stream_out_stop.write(true);
+        stream_out_stop.write(true);
 #if DEBUG_STATS
-    hls::print("[storeEdgesPerBlock]: FINISHED.\n", 0);
+        hls::print("[storeEdgesPerBlock]: FINISHED.\n", 0);
 #endif
-}
+    }
 
 /* Handles packing and writing to memory */
 void packAndStoreEdges(hls::stream<processed_edge_t>& stream_in, 
