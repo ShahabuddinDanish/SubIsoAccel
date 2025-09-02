@@ -1276,15 +1276,20 @@ INITIALIZE_URAM_LOOP:
         block_counter1[g] = 0;
     }
 
-    unsigned int previous_edge_count = 0;   // Tracks cumulative edges
-    unsigned int scratchpad_word_idx = 0;   // Tracks word index into scratchpad buffer
+    unsigned int previous_edge_count = 0;   /* Tracks cumulative edges */
     auto prev_ntb = 0;
     unsigned int base_address = 0;
 
 BLOCK_HTB_TOP_LOOP:
     for (auto s = 0; s < block_per_table * numTables; s++) {
         auto block_edges = block_n_edges[s] - previous_edge_count;
-        const unsigned long num_block_words = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+
+        unsigned long num_block_words = 0;
+        unsigned int start_word_addr = previous_edge_count / INSTR_PER_WORD;  /* Tracks word index into scratchpad buffer */
+        if (block_edges > 0) {
+            unsigned int end_word_addr = (previous_edge_count + block_edges - 1) / INSTR_PER_WORD;
+            num_block_words = end_word_addr - start_word_addr + 1;
+        }
 
         auto ntb = s >> (hash1_w + hash2_w - COUNTERS_PER_BLOCK);
         if (prev_ntb != ntb){
@@ -1302,15 +1307,17 @@ COUNT_EDGES_INSIDE_BLOCK_LOOP:
         for (auto g_word = 0; g_word < num_block_words; g_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
 
-          row_t packed_edge = edge_buf[scratchpad_word_idx + g_word];
+          row_t packed_edge = edge_buf[start_word_addr + g_word];
 #if DEBUG_STATS
           ap_uint<NODE_W> ixg_node_val = packed_edge.range(IXG_NODE + NODE_W - 1, IXG_NODE);
           hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading packed edge word %d\n", (unsigned int)g_word);
-          hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading word from scratchpad_buf[%d]\n", (unsigned int)(g_word + scratchpad_word_idx));
+          hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading word from scratchpad_buf[%d]\n", (unsigned int)(g_word + start_word_addr));
 #endif
           for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
 #pragma HLS unroll
-            if ((g_word * INSTR_PER_WORD + g_unpack) < block_edges) {
+            /* Process only relevant slots */
+            unsigned int absolute_edge_index = (start_word_addr + g_word) * INSTR_PER_WORD + g_unpack;
+            if (absolute_edge_index >= previous_edge_count && absolute_edge_index < block_n_edges[s]) {
               ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (g_unpack+1) - 1, INSTR_WIDTH * g_unpack);
               ap_uint<NODE_W> indexing_hash = edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
               ap_uint<NODE_W> indexed_hash =  edge.range(IXD_HASH + NODE_W - 1, IXD_HASH);
@@ -1383,10 +1390,11 @@ COUNTERS_TO_OFFSETS_URAM_LOOP:
 STORE_EDGES_INSIDE_BLOCK_LOOP:
         for (auto g_word = 0; g_word < num_block_words; g_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
-          row_t packed_edge = edge_buf[scratchpad_word_idx + g_word];
+          row_t packed_edge = edge_buf[start_word_addr + g_word];
           for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
 #pragma HLS unroll
-            if ((g_word * INSTR_PER_WORD + g_unpack) < block_edges) {
+            unsigned int absolute_edge_index = (start_word_addr + g_word) * INSTR_PER_WORD + g_unpack;
+            if (absolute_edge_index >= previous_edge_count && absolute_edge_index < block_n_edges[s]) {
               ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (g_unpack+1) - 1, INSTR_WIDTH * g_unpack);
 
               ap_uint<NODE_W> indexing_hash = edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
@@ -1503,7 +1511,6 @@ STORE_OFFSETS_BLOCK_LOOP:
         }
         /* Update trackers for the next block */
         previous_edge_count = block_n_edges[s];
-        scratchpad_word_idx += num_block_words;
         prev_ntb = ntb;
     }
 #if DEBUG_STATS
