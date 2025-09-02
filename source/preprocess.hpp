@@ -1109,8 +1109,7 @@ template<size_t NODE_W,
          size_t MAX_LABELS>
 void
 storeEdgesPerBlock(hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2],
-                  hls::stream<processed_edge_t>& stream_out,
-                  hls::stream<bool>& stream_out_stop,
+                  row_t* m_axi, /* Target memory (scratchpad buffer bloom_p) */
                   unsigned int block_n_edges[4096])
 {
     const size_t BRAM_LAT = 3;
@@ -1125,8 +1124,8 @@ storeEdgesPerBlock(hls::stream<store_tuple_t<processed_edge_t> > stream_edge[2],
 
 STORE_EDGES_PER_BLOCK_LOOP:
     while (stopped_streams < 2) {
-#pragma HLS dependence variable = block_n_edges type = inter direction =       \
-  RAW false
+#pragma HLS dependence variable = block_n_edges type = inter direction = RAW false
+#pragma HLS dependence variable = m_axi type = inter direction = RAW false
 #pragma HLS pipeline II = 1
 
         for (int i = 0; i < 2; i++) {
@@ -1171,6 +1170,22 @@ STORE_EDGES_PER_BLOCK_LOOP:
                       local_value_counter = block_n_edges[address];
                     }
 
+                    /* Calculate the 512-bit word address and the 128-bit slot index */
+                    unsigned int word_addr = local_value_counter / INSTR_PER_WORD;
+                    unsigned int slot_idx = local_value_counter % INSTR_PER_WORD;
+#if DEBUG_STATS
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Block=%d\n", (unsigned int)address);
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Word Address=%d\n", (unsigned int)word_addr);
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Slot Index=%d\n", (unsigned int)slot_idx);
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)tuple_in.edge.range(63, 32)); /*indexing_node*/
+                    hls::print("%d) to output stream.\n", (unsigned int)tuple_in.edge.range(31, 0)); /* indexed_node */
+                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge to scratchpad_buf[%d]\n", (unsigned int)local_value_counter);
+#endif
+                    /* Perform Read-Modify-Write */
+                    row_t temp_word = m_axi[word_addr];
+                    temp_word.range(INSTR_WIDTH * (slot_idx + 1) - 1, INSTR_WIDTH * slot_idx) = tuple_in.edge;
+                    m_axi[word_addr] = temp_word;
+
                     /* Shift everything by one position and writes the last one in memory */
                     for (auto s = 0; s < BRAM_LAT - 1; s++) {
 #pragma HLS unroll
@@ -1184,13 +1199,6 @@ STORE_EDGES_PER_BLOCK_LOOP:
                     local_cache_counter[0] = local_value_counter + 1;
                     local_cache_valid[0] = true;
                     block_n_edges[address] = local_value_counter + 1;
-#if DEBUG_STATS
-                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Block=%d\n", (unsigned int)address);
-                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)tuple_in.edge.range(63, 32)); /*indexing_node*/
-                    hls::print("%d) to output stream.\n", (unsigned int)tuple_in.edge.range(31, 0)); /* indexed_node */
-                    hls::print("[STORE_EDGES_PER_BLOCK_LOOP]: Writing edge to scratchpad_buf[%d]\n", (unsigned int)local_value_counter);
-#endif
-                    stream_out.write(tuple_in.edge);
 #ifndef __SYNTHESIS__
                     assert(local_value_counter < UINT32_MAX);
 #endif
@@ -1198,82 +1206,10 @@ STORE_EDGES_PER_BLOCK_LOOP:
             }
         }
     }
-        /* Both input streams are confirmed empty, send the stop signal downstream */
-#if DEBUG_STATS
-    hls::print("[storeEdgesPerBlock]: Loop finished. Sending STOP signal downstream.\n");
-#endif
-        stream_out_stop.write(true);
 #if DEBUG_STATS
         hls::print("[storeEdgesPerBlock]: FINISHED.\n", 0);
 #endif
     }
-
-/* Handles packing and writing to memory */
-void packAndStoreEdges(hls::stream<processed_edge_t>& stream_in, 
-                       hls::stream<bool>& stream_in_stop,
-                       row_t* m_axi) 
-{
-    row_t packing_buffer;
-    int pack_counter = 0;
-    unsigned int write_address = 0;
-    bool stop = false;
-
-#if DEBUG_STATS
-    hls::print("\n[packAndStoreEdges] STARTING.\n", 0);
-#endif
-
-PACK_LOOP:
-    while(!stop) {
-#pragma HLS pipeline II=1
-        
-#if DEBUG_STATS
-        hls::print("[PACK_LOOP]: Waiting to read edge.\n", 0);
-#endif
-
-        // Use a non-blocking read for next 128-bit processed edge from the stream or read the stop signal
-        processed_edge_t edge;
-        if (stream_in.read_nb(edge)) {
-#if DEBUG_STATS
-          hls::print("[PACK_LOOP]: Read edge from stream. Packing into slot %d.\n", pack_counter);
-#endif
-          // Place the edge into the correct slot in 512-bit buffer
-          packing_buffer.range(INSTR_WIDTH * (pack_counter + 1) - 1, INSTR_WIDTH * pack_counter) = edge;
-          pack_counter++;
-        
-          // If the buffer is full, write it to DDR and reset.
-          if (pack_counter == INSTR_PER_WORD) {
-#if DEBUG_STATS
-              hls::print("[PACK_LOOP]: Word is full. Writing full 512-bit word to scratchpad_buf[%d]\n", write_address);
-#endif
-              m_axi[write_address] = packing_buffer;
-              write_address++;
-              pack_counter = 0;
-          }
-        } else {
-              // If the data stream is empty, check for the stop signal
-#if DEBUG_STATS
-              hls::print("[PACK_LOOP]: Checking for Stop SIGNAL.\n");
-#endif
-              stream_in_stop.read_nb(stop);
-        }
-    }
-    
-    // After the loop, write remaining partial data
-    if (pack_counter > 0) {
-        // Zero out the rest of the buffer
-        for (int i = pack_counter; i < INSTR_PER_WORD; ++i) {
-#pragma HLS unroll
-            packing_buffer.range(INSTR_WIDTH * (i + 1) - 1, INSTR_WIDTH * i) = 0;
-        }
-#if DEBUG_STATS
-        hls::print("[packAndStoreEdges]: Loop finished. Writing final partial word to scratchpad_buf[%d].\n", write_address);
-#endif
-        m_axi[write_address] = packing_buffer;
-    }
-#if DEBUG_STATS
-    hls::print("[packAndStoreEdges] FINISHED.\n", 0);
-#endif
-}
 
 template<size_t NODE_W,
          size_t LAB_W,
@@ -1310,13 +1246,9 @@ storeEdgePerBlockWrap(row_t* edge_buf,
                                            numDataEdges,
                                            stream_edge);
 
-    // Writes to sorted_edge_stream instead of DDR
+    /* Reads from stream, sorts edges according to block for blockToHTB and writes packed data to DDR */
     storeEdgesPerBlock<NODE_W, LAB_W, LKP3_HASH_W, MAX_HASH_W, MAX_LABELS>(
-        stream_edge, sorted_edge_stream, stop_stream, block_n_edges
-    );
-
-    // Reads from stream and writes packed data to DDR
-    packAndStoreEdges(sorted_edge_stream, stop_stream, block_buf);
+      stream_edge, block_buf, block_n_edges);
 }
 
 template<size_t NODE_W,
