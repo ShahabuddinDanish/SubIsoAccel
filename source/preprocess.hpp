@@ -304,7 +304,7 @@ BLOOM_READ_TASK_LOOP:
               tuple_out.indexed_h = prev_indexed_h;
               tuple_out.write = true; // Signal end of group
               tuple_out.last = false;
-#ifdef DEBUG_INTERFACE
+#if DEBUG_STATS
               hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE (edge of previous group): address=%d\n", (unsigned int)tuple_out.address);
               hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE (edge of previous group): indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
               hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE (edge of previous group): write=%d\n", (unsigned int)tuple_out.write);
@@ -318,7 +318,7 @@ BLOOM_READ_TASK_LOOP:
           tuple_out.indexed_h = indexed_h;
           tuple_out.write = false;
           tuple_out.last = false;
-#ifdef DEBUG_INTERFACE
+#if DEBUG_STATS
           hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE 1, address=%d\n", (unsigned int)tuple_out.address);
           hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE 1, indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
           hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE 1, write=%d\n", (unsigned int)tuple_out.write);
@@ -334,7 +334,7 @@ BLOOM_READ_TASK_LOOP:
               tuple_bagtoset_out.write = is_new_group;
               tuple_bagtoset_out.last = false;
               tuple_bagtoset_out.valid = true;
-#ifdef DEBUG_INTERFACE
+#if DEBUG_STATS
               hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE for current candidate vertex: indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
               hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE for current candidate vertex: write=%d\n", (unsigned int)tuple_bagtoset_out.write);
               hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE for current candidate vertex: valid=%d\n", (unsigned int)tuple_bagtoset_out.valid);
@@ -355,7 +355,7 @@ BLOOM_READ_TASK_LOOP:
       tuple_out.indexed_h = prev_indexed_h;
       tuple_out.write = true;
       tuple_out.last = (ntb == (numTables - 1));
-#ifdef DEBUG_INTERFACE
+#if DEBUG_STATS
       hls::print("[BLOOM_READ_TASK_LOOP]: Sending TUPLE after processing table to finalize last group: address=%d\n", (unsigned int)tuple_out.address);
       hls::print("[BLOOM_READ_TASK_LOOP]: Sending TUPLE after processing table to finalize last group: indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
       hls::print("[BLOOM_READ_TASK_LOOP]: Sending TUPLE after processing table to finalize last group: write=%d\n", (unsigned int)tuple_out.write);
@@ -371,7 +371,7 @@ BLOOM_READ_TASK_LOOP:
   final_tuple.write = true;
   final_tuple.last = true;
   final_tuple.valid = false;
-#ifdef DEBUG_INTERFACE
+#if DEBUG_STATS
   hls::print("[bloomRead]: Final TUPLE, indexing_v=%d\n", (unsigned int)final_tuple.indexing_v);
   hls::print("[bloomRead]: Final TUPLE, valid=%d\n", (unsigned int)final_tuple.valid);
   hls::print("[bloomRead]: Final TUPLE, write=%d\n", (unsigned int)final_tuple.write);
@@ -1528,7 +1528,7 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
               // Calculate the 512-bit word address and the 64-bit slot within it
               ap_uint<32> word_addr = edge_64bit_index / EDGES_PER_512_WORD;
               ap_uint<32> slot_index = edge_64bit_index % EDGES_PER_512_WORD;
-#ifdef DEBUG_STATS
+#if DEBUG_STATS
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge (%d, ", (unsigned int)indexing_node);
               hls::print("%d)\n", (unsigned int)indexed_node);
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Writing edge to htb_buf[%d]\n", (unsigned int)edge_64bit_index);
@@ -1537,13 +1537,13 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
 #endif
               // Perform the read-modify-write
               row_t temp_word = htb_buf[word_addr];
-#ifdef DEBUG_STATS              
+#if DEBUG_STATS              
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Word BEFORE modify [511:256]=%s\n", temp_word.range(511, 256).to_string(16).c_str());
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Word BEFORE modify [255:  0]=%s\n", temp_word.range(255, 0).to_string(16).c_str());
 #endif
               temp_word.range(64 * (slot_index + 1) - 1, 64 * slot_index) = indexing_node.concat(indexed_node);
               htb_buf[word_addr] = temp_word;
-#ifdef DEBUG_STATS              
+#if DEBUG_STATS              
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Word AFTER modify [511:256]=%s\n", temp_word.range(511, 256).to_string(16).c_str());
               hls::print("[STORE_EDGES_INSIDE_BLOCK_LOOP]: Word AFTER modify [255:  0]=%s\n", temp_word.range(255, 0).to_string(16).c_str());
 #endif
