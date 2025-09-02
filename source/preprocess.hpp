@@ -1290,18 +1290,20 @@ INITIALIZE_URAM_LOOP:
         block_counter1[g] = 0;
     }
 
-    auto prev_offset = 0;
+    unsigned int previous_edge_count = 0;   // Tracks cumulative edges
+    unsigned int scratchpad_word_idx = 0;   // Tracks word index into scratchpad buffer
     auto prev_ntb = 0;
     unsigned int base_address = 0;
 
 BLOCK_HTB_TOP_LOOP:
     for (auto s = 0; s < block_per_table * numTables; s++) {
-        auto block_edges = block_n_edges[s] - prev_offset;
+        auto block_edges = block_n_edges[s] - previous_edge_count;
+        const unsigned long num_block_words = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
+
         auto ntb = s >> (hash1_w + hash2_w - COUNTERS_PER_BLOCK);
         if (prev_ntb != ntb){
             base_address = 0;
         }
-        const unsigned long num_block_words = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
 #if DEBUG_STATS
         hls::print("[BLOCK_HTB_TOP_LOOP]: Processing block s=%d\n", (unsigned int)s);
         hls::print("[BLOCK_HTB_TOP_LOOP]: Processing block for Table ntb=%d\n", (unsigned int)ntb);
@@ -1313,21 +1315,19 @@ BLOCK_HTB_TOP_LOOP:
 COUNT_EDGES_INSIDE_BLOCK_LOOP:
         for (auto g_word = 0; g_word < num_block_words; g_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
-          
-          row_t packed_edge = edge_buf[prev_offset + g_word];
+
+          row_t packed_edge = edge_buf[scratchpad_word_idx + g_word];
 #if DEBUG_STATS
           ap_uint<NODE_W> ixg_node_val = packed_edge.range(IXG_NODE + NODE_W - 1, IXG_NODE);
           hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading packed edge word %d\n", (unsigned int)g_word);
-          hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading from scratchpad_buf[%d]\n", (unsigned int)(g_word + prev_offset));
+          hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Reading word from scratchpad_buf[%d]\n", (unsigned int)(g_word + scratchpad_word_idx));
 #endif
           for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
 #pragma HLS unroll
             if ((g_word * INSTR_PER_WORD + g_unpack) < block_edges) {
               ap_uint<INSTR_WIDTH> edge = packed_edge.range(INSTR_WIDTH * (g_unpack+1) - 1, INSTR_WIDTH * g_unpack);
-
               ap_uint<NODE_W> indexing_hash = edge.range(IXG_HASH + NODE_W - 1, IXG_HASH);
               ap_uint<NODE_W> indexed_hash =  edge.range(IXD_HASH + NODE_W - 1, IXD_HASH);
-
 #if DEBUG_STATS
           hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: Unpacking instruction %d\n", (unsigned int)g_unpack);
           hls::print("[COUNT_EDGES_INSIDE_BLOCK_LOOP]: ixg_node=%d\n", (unsigned int)edge.range(IXG_NODE + NODE_W - 1, IXG_NODE));
@@ -1384,26 +1384,20 @@ COUNTERS_TO_OFFSETS_URAM_LOOP:
             ap_uint<64> offset0, offset1;
             offset0.range(31, 0) = base_address;
             offset0.range(63, 32) = base_address + counter0.range(31, 0);
-            offset1.range(31, 0) =
-              base_address + counter0.range(31, 0) + counter0.range(63, 32);
-            offset1.range(63, 32) = base_address + counter0.range(31, 0) +
-                                    counter0.range(63, 32) +
-                                    counter1.range(31, 0);
-            base_address += counter0.range(31, 0) + counter0.range(63, 32) +
-                            counter1.range(31, 0) + counter1.range(63, 32);
+            offset1.range(31, 0) = base_address + counter0.range(31, 0) + counter0.range(63, 32);
+            offset1.range(63, 32) = base_address + counter0.range(31, 0) + counter0.range(63, 32) + counter1.range(31, 0);
+            base_address += counter0.range(31, 0) + counter0.range(63, 32) + counter1.range(31, 0) + counter1.range(63, 32);
             block_counter0[g] = offset0;
             block_counter1[g] = offset1;
         }
-
-        const unsigned long num_block_words_store = (block_edges + INSTR_PER_WORD - 1) / INSTR_PER_WORD;
 
 #if DEBUG_STATS
         hls::print("[BLOCK_HTB_TOP_LOOP]: PASS 2. Scattering edges into final htb_buf locations.\n", 0);
 #endif
 STORE_EDGES_INSIDE_BLOCK_LOOP:
-        for (auto g_word = 0; g_word < num_block_words_store; g_word++) {
+        for (auto g_word = 0; g_word < num_block_words; g_word++) {
 #pragma HLS pipeline II = INSTR_PER_WORD
-          row_t packed_edge = edge_buf[prev_offset + g_word];
+          row_t packed_edge = edge_buf[scratchpad_word_idx + g_word];
           for (int g_unpack = 0; g_unpack < INSTR_PER_WORD; g_unpack++) {
 #pragma HLS unroll
             if ((g_word * INSTR_PER_WORD + g_unpack) < block_edges) {
@@ -1454,7 +1448,7 @@ STORE_EDGES_INSIDE_BLOCK_LOOP:
               block_counter1[(address >> 2)] = row_offset1;
               block_counter0[(address >> 2)] = row_offset0;
 
-              const int EDGES_PER_512_WORD = DDR_WORD / 64; // Should be 8 at 512 bits
+              const int EDGES_PER_512_WORD = DDR_WORD / 64;
               ap_uint<32> edge_64bit_index = (hTables[ntb].start_edges * EDGE_ROW) + offset;
 
               // Calculate the 512-bit word address and the 64-bit slot within it
@@ -1521,7 +1515,9 @@ STORE_OFFSETS_BLOCK_LOOP:
                 htb_buf[word_addr + (s * (NUM_COUNTER_WORDS / COUNTER_WORDS_PER_512))] = packed_counters;
             }
         }
-        prev_offset += num_block_words;
+        /* Update trackers for the next block */
+        previous_edge_count = block_n_edges[s];
+        scratchpad_word_idx += num_block_words;
         prev_ntb = ntb;
     }
 #if DEBUG_STATS
