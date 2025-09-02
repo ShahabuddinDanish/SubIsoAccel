@@ -253,13 +253,14 @@ BLOOM_READ_TASK_LOOP:
       hls::print("[BLOOM_READ_TASK_LOOP]: Processing table %d\n", ntb);
     #endif
 
-    if (hTables[ntb].n_edges == 0) continue; // Skip empty tables
-
     /* During first iteration do not consider the difference between
     prev_indexing_h and indexing_h to be useful to write the bloom */
     bool first_it = true;
+    counter = 0;
     unsigned int cycles = (hTables[ntb].n_edges + EDGE_ROW - 1) / EDGE_ROW;
     unsigned int offset = hTables[ntb].start_edges;
+
+    if (hTables[ntb].n_edges == 0) continue; // Skip empty tables
 
     /* Read all the edges in a table and divide them by hash1 */
   BLOOM_READ_EDGES_BLOCK:
@@ -272,8 +273,8 @@ BLOOM_READ_TASK_LOOP:
 
       for (int i = 0; i < EDGE_ROW; i++) {
 //#pragma HLS unroll
-        /* Only process if it's a valid edge, not padding */
         if ((start * EDGE_ROW + i) < hTables[ntb].n_edges) {
+          //edge = row.range(((i + 1) << EDGE_LOG) - 1, i << EDGE_LOG);
           ap_uint<EDGE_W> edge = row;   // Read lowest 64 bits
           row >>= EDGE_W;               // Right-shift for next iteration
           indexing_v = edge.range(NODE_W * 2 - 1, NODE_W);
@@ -284,8 +285,6 @@ BLOOM_READ_TASK_LOOP:
         hls::print("[BLOOM_READ_EDGES_BLOCK]: Unpacked edge: (%d, ", (unsigned int)indexing_v);
         hls::print("%d)\n", (unsigned int)indexed_v);
 #endif
-
-          /* Hashing logic */
           hash_in0.write(indexed_v);
           hash_in1.write(indexing_v);
           xf::database::hashLookup3<NODE_W>(hash_in0, hash_out0);
@@ -294,90 +293,77 @@ BLOOM_READ_TASK_LOOP:
           indexing_h = hash_out1.read();
           indexing_h = indexing_h.range(hash1_w - 1, 0);
 
+          bool valid = (counter < hTables[ntb].n_edges);
           bool write = (indexing_h != prev_indexing_h);
-          bool is_new_group = !first_it && write;
-
-          /* If we see a new indexing hash, the previous group is finished 
-             finalize the previous group for the bloom filter */
-          if (is_new_group) {
-              tuple_out.address = ntb * (1UL << hash1_w) + prev_indexing_h;
-              tuple_out.indexed_h = prev_indexed_h;
-              tuple_out.write = true; // Signal end of group
-              tuple_out.last = false;
-#if DEBUG_STATS
-              hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE (edge of previous group): address=%d\n", (unsigned int)tuple_out.address);
-              hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE (edge of previous group): indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
-              hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE (edge of previous group): write=%d\n", (unsigned int)tuple_out.write);
-              hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE (edge of previous group): last=%d\n", (unsigned int)tuple_out.last);
+          /* Writing edge of previous iteration */
+          if (valid && !first_it) {
+            tuple_out.address = ntb * (1UL << hash1_w) + prev_indexing_h;
+            tuple_out.last = false;
+            tuple_out.write = write;
+            tuple_out.indexed_h = prev_indexed_h;
+#ifdef DEBUG_STATS
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (edge of previous iteration), address=%d\n", (unsigned int)tuple_out.address);
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (edge of previous iteration), indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (edge of previous iteration), write=%d\n", (unsigned int)tuple_out.write);
+            hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (edge of previous iteration), last=%d\n", (unsigned int)tuple_out.last);
 #endif
-              stream_tuple_bloom_out.write(tuple_out);
-          }
+            stream_tuple_bloom_out.write(tuple_out);
 
-          /* Send bloom information for current edge */
-          tuple_out.address = ntb * (1UL << hash1_w) + indexing_h;
-          tuple_out.indexed_h = indexed_h;
-          tuple_out.write = false;
-          tuple_out.last = false;
-#if DEBUG_STATS
-          hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE 1, address=%d\n", (unsigned int)tuple_out.address);
-          hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE 1, indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
-          hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE 1, write=%d\n", (unsigned int)tuple_out.write);
-          hls::print("[BLOOM_READ_EDGES_BLOCK] Sending TUPLE 1, last=%d\n", (unsigned int)tuple_out.last);
-#endif
-          stream_tuple_bloom_out.write(tuple_out);
-
-          /* Directly send the current candidate vertex
-            removes "process-previous" logic for candidates */
-          if (ntb == minTableIndex) {
+            if (ntb == minTableIndex) {
               bagtoset_tuple_t<NODE_W> tuple_bagtoset_out;
-              tuple_bagtoset_out.indexing_v = indexing_v;
-              tuple_bagtoset_out.write = is_new_group;
+              tuple_bagtoset_out.indexing_v = prev_indexing_v;
+              tuple_bagtoset_out.write = write;
               tuple_bagtoset_out.last = false;
               tuple_bagtoset_out.valid = true;
-#if DEBUG_STATS
-              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE for current candidate vertex: indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
-              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE for current candidate vertex: write=%d\n", (unsigned int)tuple_bagtoset_out.write);
-              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE for current candidate vertex: valid=%d\n", (unsigned int)tuple_bagtoset_out.valid);
-              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE for current candidate vertex: last=%d\n", (unsigned int)tuple_bagtoset_out.last);
+#ifdef DEBUG_STATS
+              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
+              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, write=%d\n", (unsigned int)tuple_bagtoset_out.write);
+              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, valid=%d\n",(unsigned int)tuple_bagtoset_out.valid);
+              hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, last=%d\n", (unsigned int)tuple_bagtoset_out.last);
 #endif
               stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
+            }
           }
-          prev_indexing_h = indexing_h;
-          prev_indexed_h = indexed_h;
+
+          if (valid) {
+            prev_indexing_h = indexing_h;
+            prev_indexing_v = indexing_v;
+            prev_indexed_h = indexed_h;
+          }
+          counter++;
           first_it = false;
         }
       }
-    } // End loop over words
-
-    /* After processing table, finalize last group */
-    if (!first_it) {
-      tuple_out.address = ntb * (1UL << hash1_w) + prev_indexing_h;
-      tuple_out.indexed_h = prev_indexed_h;
-      tuple_out.write = true;
-      tuple_out.last = (ntb == (numTables - 1));
-#if DEBUG_STATS
-      hls::print("[BLOOM_READ_TASK_LOOP]: Sending TUPLE after processing table to finalize last group: address=%d\n", (unsigned int)tuple_out.address);
-      hls::print("[BLOOM_READ_TASK_LOOP]: Sending TUPLE after processing table to finalize last group: indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
-      hls::print("[BLOOM_READ_TASK_LOOP]: Sending TUPLE after processing table to finalize last group: write=%d\n", (unsigned int)tuple_out.write);
-      hls::print("[BLOOM_READ_TASK_LOOP]: Sending TUPLE after processing table to finalize last group: last=%d\n", (unsigned int)tuple_out.last);
-#endif
-      stream_tuple_bloom_out.write(tuple_out);
     }
-  } // End loop over tables
 
-  /* Send the final stop signal to bagtoset */
-  bagtoset_tuple_t<NODE_W> final_tuple;
-  final_tuple.indexing_v = 0;
-  final_tuple.write = true;
-  final_tuple.last = true;
-  final_tuple.valid = false;
-#if DEBUG_STATS
-  hls::print("[bloomRead]: Final TUPLE, indexing_v=%d\n", (unsigned int)final_tuple.indexing_v);
-  hls::print("[bloomRead]: Final TUPLE, valid=%d\n", (unsigned int)final_tuple.valid);
-  hls::print("[bloomRead]: Final TUPLE, write=%d\n", (unsigned int)final_tuple.write);
-  hls::print("[bloomRead]: Final TUPLE, last=%d\n", (unsigned int)final_tuple.last);
+    /* Write explicitly the last bloom filter since
+    the difference between prev_indexing_h and indexing_h
+    does not work at the end of the table */
+    tuple_out.address = ntb * (1UL << hash1_w) + prev_indexing_h;
+    tuple_out.indexed_h = prev_indexed_h;
+    tuple_out.write = true;
+    tuple_out.last = (ntb == (numTables - 1));
+#ifdef DEBUG_STATS
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), address=%d\n", (unsigned int)tuple_out.address);
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), write=%d\n", (unsigned int)tuple_out.write);
+          hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), last=%d\n", (unsigned int)tuple_out.last);
 #endif
-  stream_tuple_bagtoset_out.write(final_tuple);
+    stream_tuple_bloom_out.write(tuple_out);
+
+    bagtoset_tuple_t<NODE_W> tuple_bagtoset_out;
+    tuple_bagtoset_out.indexing_v = prev_indexing_v;
+    tuple_bagtoset_out.write = true;
+    tuple_bagtoset_out.valid = ntb == minTableIndex;
+    tuple_bagtoset_out.last = (ntb == (numTables - 1));
+#ifdef DEBUG_STATS
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, write=%d\n", (unsigned int)tuple_bagtoset_out.write);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, valid=%d\n", (unsigned int)tuple_bagtoset_out.valid);
+    hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, last=%d\n", (unsigned int)tuple_bagtoset_out.last);
+#endif
+    stream_tuple_bagtoset_out.write(tuple_bagtoset_out);
+  }
 #if DEBUG_STATS
   hls::print("[bloomRead]: FINISHED.\n", 0);
 #endif
