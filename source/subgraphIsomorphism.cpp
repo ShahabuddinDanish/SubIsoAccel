@@ -371,6 +371,10 @@ mwj_propose(hls::stream<ap_uint<V_ID_W>>& stream_fifo_in,
   ap_uint<V_ID_W> vertex_read;
   sol_node_t<vertex_t> vertex;
 
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_propose]: STARTING.\n", 0);
+#endif
+
   /* Read BFS solutions from dynfifo. Solution are read as radix and extension.
    * The radix is marked by the 31th bit being asserted. The motivation behind
    * is to not always resend all the new solution but instead send only the
@@ -378,8 +382,17 @@ mwj_propose(hls::stream<ap_uint<V_ID_W>>& stream_fifo_in,
    * STOP_NODE stops the entire pipeline.
    * FAKE_NODE used in case of radix without extension: single node solutions */
   vertex_read = stream_fifo_in.read();
+
+#if TRACE_MULTIWAY_JOIN
+  hls::print("[mwj_propose]: Read from FIFO = 0x%s\n", vertex_read.to_string(16).c_str());
+  if(vertex_read == STOP_NODE) hls::print("[mwj_propose]: Received STOP_NODE.\n", 0);
+#endif
+
   if (vertex_read == FAKE_NODE) {
     n_nodes = 0;
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_propose]: FAKE_NODE received, resetting node count.\n");
+#endif
   } else {
     bool radix = vertex_read.test(V_ID_W - 1);
     vertex.pos = n_nodes;
@@ -388,6 +401,13 @@ mwj_propose(hls::stream<ap_uint<V_ID_W>>& stream_fifo_in,
     vertex.stop = (vertex_read == STOP_NODE);
     if (radix)
       n_nodes++;
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_propose]: Writing tuple, node=%d\n", (unsigned int)vertex.node);
+    hls::print("[mwj_propose]: Writing tuple, pos=%d\n", (int)vertex.pos);
+    hls::print("[mwj_propose]: Writing tuple, last=%d\n", (int)vertex.last);
+    hls::print("[mwj_propose]: Writing tuple, stop=%d\n", (int)vertex.stop);
+    hls::print("[mwj_propose]: Writing tuple, radix=%d\n", (int)radix);
+#endif
     stream_sol_out.write(vertex);
   }
 }
@@ -415,6 +435,10 @@ mwj_edgebuild(const unsigned char hash1_w,
   typedef ap_uint<2> state_t;
   state_t state = reset;
 
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_edgebuild]: STARTING.\n", 0);
+#endif
+
 EDGEBUILD_TASK_LOOP:
   while (true) {
 #pragma HLS pipeline II = 1 style = flp
@@ -425,6 +449,12 @@ EDGEBUILD_TASK_LOOP:
       stream_sol_out.write(vertex);
       curQV = vertex.pos + 1;
       table_pointer = 0;
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(sol): Received partial solution node = %d.\n", (unsigned int)vertex.node);
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(sol): Received partial solution node at pos %d.\n", (int)vertex.pos);
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(sol): Received partial solution node. Last=%d.\n", (int)vertex.last);
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(sol): Received partial solution node: Current solution size=%d.\n", (int)curQV);
+#endif
       if (vertex.stop) {
         break;
       } else if (vertex.last) {
@@ -443,6 +473,12 @@ EDGEBUILD_TASK_LOOP:
       tuple_out.num_tb_indexed = qVertices[curQV].numTablesIndexed;
       tuple_out.last =
         (table_pointer == (qVertices[curQV].numTablesIndexed - 1));
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, indexing_v=%d.\n", (unsigned int)tuple_out.indexing_v);
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, tb_index=%d.\n", (int)tuple_out.tb_index);
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, iv_pos=%d.\n", (int)tuple_out.iv_pos);
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, last=%d.\n", (int)tuple_out.last));
+#endif
       stream_tuple_out.write(tuple_out);
       if (table_pointer == qVertices[curQV].numTablesIndexed - 1) {
         state = reset;
@@ -453,6 +489,9 @@ EDGEBUILD_TASK_LOOP:
       tuple_out.reset = true;
       tuple_out.last = false;
       tuple_out.stop = false;
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(reset), Writing RESET tuple.\n", 0);
+#endif
       stream_tuple_out.write(tuple_out);
       state = streaming_sol;
     }
@@ -461,7 +500,13 @@ EDGEBUILD_TASK_LOOP:
   /* Propagate stop node on two different routes */
   findmin_tuple_t tuple_out;
   tuple_out.stop = true;
+#if TRACE_MULTIWAY_JOIN
+  hls::print("[mwj_edgebuild]: Loop FINISHED. Writing STOP signal.\n", 0);
+#endif
   stream_tuple_out.write(tuple_out);
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[mwj_edgebuild]: FINISHED.\n", 0);
+#endif
 }
 
 /* Finds the set with the smallest cardinality in the intersection. Intersects
@@ -488,6 +533,10 @@ mwj_findmin(bloom_t* bloom_p,
   unsigned long addr_counter;
 #pragma HLS array_partition variable = filter type = complete dim = 1
 
+#if TRACE_MULTIWAY_JOIN
+      hls::print("\n[mwj_findmin]: STARTING.\n", 0);
+#endif
+
   tuple_out.stop = false;
 
 FINDMIN_TASK_LOOP:
@@ -498,13 +547,23 @@ FINDMIN_TASK_LOOP:
     unsigned short bloom_s = 0;
 
     if (tuple_in.stop) {
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: STOP tuple received. Terminating.\n", 0);
+#endif
       break;
     } else if (tuple_in.reset) {
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: RESET tuple received. Initializing bloom filter to all 1s.\n", 0);
+#endif
       for (int s = 0; s < K_FUN; s++) {
 #pragma HLS unroll
         filter[s] = ~0;
       }
     } else {
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: Read tuple, indexing_v=%d\n", (unsigned int)tuple_in.indexing_v);
+      hls::print("[FINDMIN_TASK_LOOP]: Read tuple, tb_index=%d\n", (int)tuple_in.tb_index);
+#endif
       // Computing addresses of indexed sets
       ap_uint<LKP3_HASH_W> hash_out;
       ap_uint<MAX_HASH_W> hash_trimmed;
@@ -514,6 +573,9 @@ FINDMIN_TASK_LOOP:
       hash_trimmed = hash_trimmed.range(hash1_w - 1, 0);
       unsigned int address =
           (tuple_in.tb_index * (1UL << hash1_w)) + hash_trimmed;
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: Reading bloom filter from base address: %u\n", address);
+#endif
       address <<= K_FUN_LOG;
       for (int s = 0; s < K_FUN; s++) {
 #pragma HLS unroll
@@ -530,16 +592,30 @@ FINDMIN_TASK_LOOP:
     if (tuple_in.reset) {
       min_size = ~0;
     } else {
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: Approx set size = %d.\n", (int)bloom_s);
+      hls::print("[FINDMIN_TASK_LOOP]: Current min_size = %d.\n", (int)min_size);
+#endif
       if (bloom_s < min_size) {
         min_size = bloom_s;
         tuple_out.indexing_v = tuple_in.indexing_v;
         tuple_out.tb_index = tuple_in.tb_index;
         tuple_out.iv_pos = tuple_in.iv_pos;
         tuple_out.num_tb_indexed = tuple_in.num_tb_indexed;
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {indexing_v: %d\n", (unsigned int)tuple_out.indexing_v);
+        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {tb_index: %d}\n", (int)tuple_out.tb_index);
+#endif
       }
     }
 
     if (tuple_in.last) {
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: Last tuple in set. Writing chosen min set downstream.\n", 0);
+      hls::print("[FINDMIN_TASK_LOOP]: Final min set {indexing_v: %d}\n", (unsigned int)tuple_out.indexing_v);
+      hls::print("[FINDMIN_TASK_LOOP]: Final min set {tbl: %d}\n", (int)tuple_out.tb_index);
+      hls::print("[FINDMIN_TASK_LOOP]: Final min set with approx size %d\n", (int)min_size);
+#endif
       ap_uint<LKP3_HASH_W> hash_out;
       ap_uint<MAX_HASH_W> hash_trimmed;
       xf::database::details::hashlookup3_core<V_ID_W>(tuple_out.indexing_v,
@@ -554,6 +630,10 @@ FINDMIN_TASK_LOOP:
       if (hash_trimmed == 0) {
         tuple_out.skip_counter = true;
       }
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[0] (start address): {addr_counter: %s}\n", tuple_out.addr_counter.to_string(10).c_str());
+      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[0] (start address): {skip: %d}\n", (int)tuple_out.skip_counter);
+#endif
       stream_tuple_out[0].write(tuple_out);
 
       addr_counter = hash_trimmed;
@@ -561,11 +641,18 @@ FINDMIN_TASK_LOOP:
       addr_counter += (1UL << hash2_w) - 1;
       tuple_out.addr_counter = addr_counter;
       tuple_out.skip_counter = false;
-
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[1] (end address): {addr_counter: %s}\n", tuple_out.addr_counter.to_string(10).c_str());
+      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[1] (end address): {skip: %d}\n", (int)tuple_out.skip_counter);
+#endif
       stream_tuple_out[1].write(tuple_out);
 
       for (int g = 0; g < K_FUN; g++) {
 #pragma HLS unroll
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[FINDMIN_TASK_LOOP]: Writing to bloom filter[%d]\n", g);
+        hls::print("[FINDMIN_TASK_LOOP]: Writing intersected bloom filter: 0x%s\n", filter[g].to_string(16).c_str());
+#endif
         stream_filter_out[g].write(filter[g]);
       }
     }
@@ -573,7 +660,13 @@ FINDMIN_TASK_LOOP:
 
   /* Propagate stop node */
   tuple_out.stop = true;
+#if TRACE_MULTIWAY_JOIN
+  hls::print("[mwj_findmin]: Loop FINISHED. Writing STOP signal.\n", 0);
+#endif
   stream_tuple_out[0].write(tuple_out);
+#if TRACE_MULTIWAY_JOIN
+  hls::print("[mwj_findmin]: FINISHED.\n", 0);
+#endif
 }
 
 void
@@ -1262,14 +1355,28 @@ mwj_verify(AdjHT* hTables,
 #pragma HLS array_partition variable = edge_block type = complete
   tuple_out.stop = false;
 
+#if TRACE_MULTIWAY_JOIN
+    hls::print("\n[mwj_verify]: STARTING.\n", 0);
+#endif
+
 VERIFY_TASK_LOOP:
   while (true) {
 #pragma HLS pipeline II = 1
 
     if (stream_tuple_in.read_nb(tuple_in)) {
       if (tuple_in.stop) {
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[VERIFY_TASK_LOOP]: STOP received. Terminating.\n");
+#endif
         break;
       } else if (!tuple_in.last_set) {
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[VERIFY_TASK_LOOP]: Read tuple {indexed_v: %d}\n", (unsigned int)tuple_in.indexed_v);
+        hls::print("[VERIFY_TASK_LOOP]: Read tuple {indexing_v: %d}\n", (unsigned int)tuple_in.indexing_v);
+        hls::print("[VERIFY_TASK_LOOP]: Read tuple {flag: %d}\n", (int)tuple_in.flag);
+        hls::print("[VERIFY_TASK_LOOP]: Read tuple {last_addr: %d}\n", (int)tuple_in.bit_last_address);
+        hls::print("[VERIFY_TASK_LOOP]: Read tuple {last_edge: %d}\n", (int)tuple_in.bit_last_edge);
+#endif
         candidate_v = tuple_in.indexed_v;
         tuple_out.bit_equal = (tuple_in.flag == MIN_SET);
 
@@ -1280,14 +1387,25 @@ VERIFY_TASK_LOOP:
           // 128 bit word address
           unsigned long addr_row = hTables[tableIndex].start_edges +
                                    (tuple_in.address >> EDGE_PER_WORD);
-
+#if TRACE_MULTIWAY_JOIN
+          hls::print("[VERIFY_TASK_LOOP]: Accessing cache/memory at line address (addr_row): %d\n", (unsigned int)addr_row);
+#endif
           // Read the data
           htb_buf.get_line(addr_row, 0, edge_block);
           ap_uint<(1UL << E_W)> edge;
           edge.range(V_ID_W - 1, 0) = candidate_v;
           edge.range(2 * V_ID_W - 1, V_ID_W) = indexing_v;
+#if TRACE_MULTIWAY_JOIN
+          hls::print("[VERIFY_TASK_LOOP]: Searching for edge (%d, ", (unsigned int)indexing_v);
+          hls::print("%d).\n", (unsigned int)candidate_v);
+          hls::print("[VERIFY_TASK_LOOP]: Edge pattern: 0x%s\n", edge.to_string(16).c_str());
+#endif
           for (int g = 0; g < (1UL << CACHE_WORDS_PER_LINE); g++) {
 #pragma HLS unroll
+#if TRACE_MULTIWAY_JOIN
+            hls::print("[VERIFY_TASK_LOOP]: Data read from memory from edge_block[%d]", g);
+            hls::print("[VERIFY_TASK_LOOP]: Data read from memory = 0x%s\n", edge_block[g].to_string(16).c_str());
+#endif
             for (int s = 0; s < (1UL << (EDGE_PER_WORD)); s++) {
 #pragma HLS unroll
               if (edge == edge_block[g].range(((s + 1) << E_W) - 1, s << E_W))
@@ -1299,6 +1417,9 @@ VERIFY_TASK_LOOP:
           debug::verify_reads++;
 #endif
         }
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[VERIFY_TASK_LOOP] Verification result: bit_equal = %d\n", (int)tuple_out.bit_equal);
+#endif
         tuple_out.bit_last_edge = tuple_in.bit_last_edge;
         tuple_out.bit_last_address = tuple_in.bit_last_address;
         tuple_out.indexed_v = candidate_v;
@@ -1306,9 +1427,15 @@ VERIFY_TASK_LOOP:
       }
       tuple_out.last_batch = tuple_in.last_batch;
       tuple_out.last_set = tuple_in.last_set;
+#if TRACE_MULTIWAY_JOIN
+      if (tuple_in.last_set) hls::print("[VERIFY_TASK_LOOP] Forwarding last_set delimiter.\n", 0);
+#endif
       stream_tuple_out.write(tuple_out);
     }
   }
+#if TRACE_MULTIWAY_JOIN
+  hls::print("[mwj_verify]: FINISHED.\n", 0);
+#endif
 }
 
 /* Or reduce of bits coming from verify, compact edge blocks and output if a
@@ -1471,16 +1598,38 @@ mwj_assembly(row_t* m_axi,
   ap_uint<32> nodes_read = 0;
   bool stop = false;
 
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_assembly]: STARTING.\n", 0)
+  hls::print("[mwj_assembly]: Starting candidate seeding. n_candidate=%d\n", n_candidate);
+  hls::print("[mwj_assembly]: start_candidate_addr=%d\n", start_candidate);
+  hls::print("[mwj_assembly]: n_queryv=%d\n", n_queryv);
+#endif
+
 ASSEMBLY_TASK_LOOP:
   do {
     // Test if there are some node from start batch
     if (nodes_read < n_candidate) {
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Seeding FIFO with candidate %d\n", (unsigned int)nodes_read);
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Seeding FIFO with initial candidate out of %d\n", n_candidate);
+#endif
       ap_uint<2> word_select = nodes_read.range(1, 0);
       ap_uint<32> row_select = nodes_read >> 2;
+#if TRACE_MULTIWAY_JOIN
+      unsigned int read_addr = start_candidate + row_select;
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Accessing m_axi[%d].\n", read_addr);
+#endif
       row_t row = m_axi[start_candidate + row_select];
       ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1,
                                        V_ID_W * word_select);
-      
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Read raw 128-bit word: 0x%s\n", row.to_string(16).c_str());
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Unpacked node %d.\n", (unsigned int)node);
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Unpacked node from slot %d.\n", (unsigned int)word_select);
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Writing to FIFO: FAKE_NODE\n");
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Writing to FIFO: 0x%s\n", node.to_string(16).c_str());
+#endif
+
       /* False extension for single node solutions */
       stream_partial_out.write(FAKE_NODE);
       stream_partial_out.write(node);
@@ -1488,6 +1637,9 @@ ASSEMBLY_TASK_LOOP:
       partial_sol = 1;
       nodes_read++;
     } else {
+#if TRACE_MULTIWAY_JOIN
+      if (!stop) hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Finished seeding initial candidates. Writing STOP_NODE to FIFO.\n");
+#endif
       stream_partial_out.write(STOP_NODE);
     }
 
@@ -1495,6 +1647,13 @@ ASSEMBLY_TASK_LOOP:
     do {
 #pragma HLS PIPELINE II = 1
       assembly_node_t<vertex_t> vertex = stream_sol_in.read();
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {node: %d}\n", (unsigned int)vertex.node);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {pos: %d}\n", (int)vertex.pos);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {last: %d}\n", (int)vertex.last);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {sol: %d}\n", (int)vertex.sol);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {stop: %d}\n", (int)vertex.stop);
+#endif
       if (vertex.stop){
         stop = true;
         break;
@@ -1510,9 +1669,15 @@ ASSEMBLY_TASK_LOOP:
       }
 
       if (vertex.pos < (n_queryv - 1)){
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Writing to FIFO: 0x%s\n", dynfifo_node.to_string(16).c_str());
+#endif
         stream_partial_out.write(dynfifo_node);
       } else if (!vertex.sol && !vertex.last) {
         counter++;
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] FOUND A COMPLETE MATCH! Total count: %d\n", (unsigned int)counter);
+#endif
       }
 
       if (!vertex.sol){
@@ -1525,15 +1690,24 @@ ASSEMBLY_TASK_LOOP:
           partial_sol++;
         }
       }
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[ASSEMBLY_SET_LOOP]: [State] partial_sol count: %d\n", (unsigned int)partial_sol);
+#endif
     } while (true);
   } while (!stop);
 
   /* Write in output number of results */
   result = counter;
+#if TRACE_MULTIWAY_JOIN
+  hls::print("[mwj_assembly]: Final result count = %d\n", (unsigned int)result);
+#endif
   for (int g = 0; g < STOP_S; g++) {
 #pragma HLS unroll
     streams_stop[g].write(true);
   }
+#if TRACE_MULTIWAY_JOIN
+  hls::print("[mwj_assembly]: FINISHED.\n", 0);
+#endif
 }
 
 template<size_t BATCH_SIZE_LOG>
