@@ -477,7 +477,7 @@ EDGEBUILD_TASK_LOOP:
       hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, indexing_v=%d.\n", (unsigned int)tuple_out.indexing_v);
       hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, tb_index=%d.\n", (int)tuple_out.tb_index);
       hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, iv_pos=%d.\n", (int)tuple_out.iv_pos);
-      hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, last=%d.\n", (int)tuple_out.last));
+      hls::print("[EDGEBUILD_TASK_LOOP]: State(edge): Writing findmin_tuple, last=%d.\n", (int)tuple_out.last);
 #endif
       stream_tuple_out.write(tuple_out);
       if (table_pointer == qVertices[curQV].numTablesIndexed - 1) {
@@ -1599,7 +1599,7 @@ mwj_assembly(row_t* m_axi,
   bool stop = false;
 
 #if TRACE_MULTIWAY_JOIN
-  hls::print("\n[mwj_assembly]: STARTING.\n", 0)
+  hls::print("\n[mwj_assembly]: STARTING.\n", 0);
   hls::print("[mwj_assembly]: Starting candidate seeding. n_candidate=%d\n", n_candidate);
   hls::print("[mwj_assembly]: start_candidate_addr=%d\n", start_candidate);
   hls::print("[mwj_assembly]: n_queryv=%d\n", n_queryv);
