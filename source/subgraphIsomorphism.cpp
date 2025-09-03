@@ -760,7 +760,7 @@ READMIN_COUNTER_TASK_LOOP:
 
 #if TRACE_MULTIWAY_JOIN
     hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %u\n", row);
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", table_start_edges);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", hTables[tuple_in.tb_index].start_edges);
     hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u)\n", offset);
 #endif
 
