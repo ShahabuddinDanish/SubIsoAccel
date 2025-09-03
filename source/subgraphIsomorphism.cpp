@@ -384,7 +384,7 @@ mwj_propose(hls::stream<ap_uint<V_ID_W>>& stream_fifo_in,
   vertex_read = stream_fifo_in.read();
 
 #if TRACE_MULTIWAY_JOIN
-  hls::print("[mwj_propose]: Read from FIFO = 0x%s\n", vertex_read.to_string(16).c_str());
+  hls::print("[mwj_propose]: Read from FIFO = %s\n", vertex_read.to_string(16).c_str());
   if(vertex_read == STOP_NODE) hls::print("[mwj_propose]: Received STOP_NODE.\n", 0);
 #endif
 
@@ -603,7 +603,7 @@ FINDMIN_TASK_LOOP:
         tuple_out.iv_pos = tuple_in.iv_pos;
         tuple_out.num_tb_indexed = tuple_in.num_tb_indexed;
 #if TRACE_MULTIWAY_JOIN
-        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {indexing_v: %d\n", (unsigned int)tuple_out.indexing_v);
+        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {indexing_v: %d}\n", (unsigned int)tuple_out.indexing_v);
         hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {tb_index: %d}\n", (int)tuple_out.tb_index);
 #endif
       }
@@ -690,12 +690,23 @@ mwj_readmin_counter(AdjHT* hTables,
   unsigned char stream_p = 0;
   tuple_out.stop = false;
 
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_readmin_counter]: STARTING.\n", 0);
+#endif
+
 READMIN_COUNTER_TASK_LOOP:
   while (true) {
 #pragma HLS pipeline II = 1 style = flp
 
     tuple_in = stream_tuple_in[stream_p].read();
-
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read from stream[%d]\n", (int)stream_p);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {v: %d}\n", (unsigned int)tuple_in.indexing_v);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {tbl: %d}\n", (int)tuple_in.tb_index);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {addr_cnt: %s}\n", tuple_in.addr_counter.to_string(10).c_str());
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {skip: %d}\n", (int)tuple_in.skip_counter);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {stop: %d}\n", (int)tuple_in.stop);
+#endif
     if (tuple_in.stop) {
       break;
     }
@@ -713,8 +724,16 @@ READMIN_COUNTER_TASK_LOOP:
       /* Compute address of data inside the row */
       addr_inrow = tuple_in.addr_counter.range((DDR_BIT - C_W) - 1, 0);
 
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Accessing memory for offset count.\n", 0);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Reading m_axi address (addr_row) = %d\n", (unsigned int)addr_row);
+#endif
+
       /* Read the data */
       ram_row = m_axi[addr_row];
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Raw data read (ram_row) = %s\n", ram_row.to_string(16).c_str());
+#endif
       if (addr_inrow == 0) {
         offset = ram_row.range((1UL << C_W) - 1, 0);
       } else if (addr_inrow == 1) {
@@ -728,10 +747,22 @@ READMIN_COUNTER_TASK_LOOP:
 #if DEBUG_STATS
       debug::readmin_counter_reads++;
 #endif
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset = %u\n", (unsigned int)offset);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset from slot %d\n", (unsigned int)addr_inrow);
+    } else {
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Skipping memory access as per input tuple.\n", 0);
+#endif
     }
 
     unsigned int row =
         hTables[tuple_in.tb_index].start_edges + (offset >> (DDR_BIT - E_W));
+
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %u\n", row);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", table_start_edges);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u)\n", offset);
+#endif
 
     tuple_out.indexing_v = tuple_in.indexing_v;
     tuple_out.tb_index = tuple_in.tb_index;
@@ -740,8 +771,17 @@ READMIN_COUNTER_TASK_LOOP:
 
     if (stream_p == 0) {
       tuple_out.rowstart = row;
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Storing rowstart = %u. Waiting for end address from stream[1].\n", (unsigned int)tuple_out.rowstart);
+#endif
     } else {
       tuple_out.cycles = row - tuple_out.rowstart;
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {v: %d}\n", (unsigned int)tuple_out.indexing_v);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {tbl: %d}\n", (int)tuple_out.tb_index);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {rowstart: %u}\n", (unsigned int)tuple_out.rowstart);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {cycles: %u}\n", (unsigned int)tuple_out.cycles);
+#endif
       stream_tuple_out.write(tuple_out);
     }
     stream_p = (stream_p + 1) % 2;
@@ -749,7 +789,13 @@ READMIN_COUNTER_TASK_LOOP:
 
   /* Propagate stop node */
   tuple_out.stop = true;
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_readmin_counter]: STOP received. Forwarding STOP signal.\n", 0);
+#endif
   stream_tuple_out.write(tuple_out);
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_readmin_counter]: FINISHED.\n", 0);
+#endif
 }
 
 template<typename T_BLOOM,
@@ -1403,7 +1449,7 @@ VERIFY_TASK_LOOP:
           for (int g = 0; g < (1UL << CACHE_WORDS_PER_LINE); g++) {
 #pragma HLS unroll
 #if TRACE_MULTIWAY_JOIN
-            hls::print("[VERIFY_TASK_LOOP]: Data read from memory from edge_block[%d]", g);
+            hls::print("[VERIFY_TASK_LOOP]: Data read from memory from edge_block[%d]\n", g);
             hls::print("[VERIFY_TASK_LOOP]: Data read from memory = 0x%s\n", edge_block[g].to_string(16).c_str());
 #endif
             for (int s = 0; s < (1UL << (EDGE_PER_WORD)); s++) {
@@ -1623,11 +1669,11 @@ ASSEMBLY_TASK_LOOP:
       ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1,
                                        V_ID_W * word_select);
 #if TRACE_MULTIWAY_JOIN
-      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Read raw 128-bit word: 0x%s\n", row.to_string(16).c_str());
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Read raw 128-bit word: %s\n", row.to_string(16).c_str());
       hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Unpacked node %d.\n", (unsigned int)node);
       hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Unpacked node from slot %d.\n", (unsigned int)word_select);
       hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Writing to FIFO: FAKE_NODE\n");
-      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Writing to FIFO: 0x%s\n", node.to_string(16).c_str());
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Writing to FIFO: %s\n", node.to_string(16).c_str());
 #endif
 
       /* False extension for single node solutions */
