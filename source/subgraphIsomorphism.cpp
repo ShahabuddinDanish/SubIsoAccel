@@ -651,7 +651,7 @@ FINDMIN_TASK_LOOP:
 #pragma HLS unroll
 #if TRACE_MULTIWAY_JOIN
         hls::print("[FINDMIN_TASK_LOOP]: Writing to bloom filter[%d]\n", g);
-        hls::print("[FINDMIN_TASK_LOOP]: Writing intersected bloom filter: 0x%s\n", filter[g].to_string(16).c_str());
+        hls::print("[FINDMIN_TASK_LOOP]: Writing intersected bloom filter: %s\n", filter[g].to_string(16).c_str());
 #endif
         stream_filter_out[g].write(filter[g]);
       }
@@ -761,7 +761,7 @@ READMIN_COUNTER_TASK_LOOP:
 #if TRACE_MULTIWAY_JOIN
     hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %u\n", row);
     hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", hTables[tuple_in.tb_index].start_edges);
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u)\n", offset);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u\n", offset);
 #endif
 
     tuple_out.indexing_v = tuple_in.indexing_v;
@@ -1716,7 +1716,7 @@ ASSEMBLY_TASK_LOOP:
 
       if (vertex.pos < (n_queryv - 1)){
 #if TRACE_MULTIWAY_JOIN
-        hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Writing to FIFO: 0x%s\n", dynfifo_node.to_string(16).c_str());
+        hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Writing to FIFO: %s\n", dynfifo_node.to_string(16).c_str());
 #endif
         stream_partial_out.write(dynfifo_node);
       } else if (!vertex.sol && !vertex.last) {
