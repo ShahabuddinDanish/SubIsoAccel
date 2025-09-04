@@ -301,7 +301,7 @@ BLOOM_READ_TASK_LOOP:
             tuple_out.last = false;
             tuple_out.write = write;
             tuple_out.indexed_h = prev_indexed_h;
-#ifdef DEBUG_PRINTS
+#if DEBUG_PRINTS
             hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (edge of previous iteration), address=%d\n", (unsigned int)tuple_out.address);
             hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (edge of previous iteration), indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
             hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (edge of previous iteration), write=%d\n", (unsigned int)tuple_out.write);
@@ -315,7 +315,7 @@ BLOOM_READ_TASK_LOOP:
               tuple_bagtoset_out.write = write;
               tuple_bagtoset_out.last = false;
               tuple_bagtoset_out.valid = true;
-#ifdef DEBUG_PRINTS
+#if DEBUG_PRINTS
               hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
               hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, write=%d\n", (unsigned int)tuple_bagtoset_out.write);
               hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 1, valid=%d\n",(unsigned int)tuple_bagtoset_out.valid);
@@ -343,7 +343,7 @@ BLOOM_READ_TASK_LOOP:
     tuple_out.indexed_h = prev_indexed_h;
     tuple_out.write = true;
     tuple_out.last = (ntb == (numTables - 1));
-#ifdef DEBUG_PRINTS
+#if DEBUG_PRINTS
           hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), address=%d\n", (unsigned int)tuple_out.address);
           hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), indexed_h=%d\n", (unsigned int)tuple_out.indexed_h);
           hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE (last bloom filter), write=%d\n", (unsigned int)tuple_out.write);
@@ -356,7 +356,7 @@ BLOOM_READ_TASK_LOOP:
     tuple_bagtoset_out.write = true;
     tuple_bagtoset_out.valid = ntb == minTableIndex;
     tuple_bagtoset_out.last = (ntb == (numTables - 1));
-#ifdef DEBUG_PRINTS
+#if DEBUG_PRINTS
     hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, indexing_v=%d\n", (unsigned int)tuple_bagtoset_out.indexing_v);
     hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, write=%d\n", (unsigned int)tuple_bagtoset_out.write);
     hls::print("[BLOOM_READ_EDGES_BLOCK]: Sending TUPLE 2, valid=%d\n", (unsigned int)tuple_bagtoset_out.valid);
@@ -840,9 +840,13 @@ READ_EDGES_PER_BLOCK_LOOP:
     }
 */
   // Send a stop signal to BOTH consumer streams to prevent deadlock
+#if DEBUG_PRINTS
   hls::print("[readEdgesPerBlock] FINISHED: Sending STOP signal to stream[0]\n");
+#endif 
   stream_address[0].write({0, true});
+#if DEBUG_PRINTS
   hls::print("[readEdgesPerBlock] FINISHED: Sending STOP signal to stream[1]\n");
+#endif
   stream_address[1].write({0, true});
 }
 
@@ -1082,9 +1086,13 @@ STORE_EDGE_PER_BLOCK_LOOP:
     // }
 
   // Send a stop signal to BOTH consumer streams to prevent deadlock
+#if DEBUG_PRINTS
   hls::print("[readAndStreamEdgesPerBlock] FINISHED: Sending STOP signal to stream[0]\n");
+#endif
   stream_edge[0].write({ 0, 0, true });
+#if DEBUG_PRINTS
   hls::print("[readAndStreamEdgesPerBlock] FINISHED: Sending STOP signal to stream[1]\n");
+#endif
   stream_edge[1].write({ 0, 0, true });
 }
 

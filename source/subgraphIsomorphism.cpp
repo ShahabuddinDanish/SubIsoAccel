@@ -1458,13 +1458,13 @@ VERIFY_TASK_LOOP:
 #if DEBUG_PRINTS
           hls::print("[VERIFY_TASK_LOOP]: Searching for edge (%d, ", (unsigned int)indexing_v);
           hls::print("%d).\n", (unsigned int)candidate_v);
-          hls::print("[VERIFY_TASK_LOOP]: Edge pattern: 0x%s\n", edge.to_string(16).c_str());
+          hls::print("[VERIFY_TASK_LOOP]: Edge pattern: %s\n", edge.to_string(16).c_str());
 #endif
           for (int g = 0; g < (1UL << CACHE_WORDS_PER_LINE); g++) {
 #pragma HLS unroll
 #if DEBUG_PRINTS
             hls::print("[VERIFY_TASK_LOOP]: Data read from memory from edge_block[%d]\n", g);
-            hls::print("[VERIFY_TASK_LOOP]: Data read from memory = 0x%s\n", edge_block[g].to_string(16).c_str());
+            hls::print("[VERIFY_TASK_LOOP]: Data read from memory = %s\n", edge_block[g].to_string(16).c_str());
 #endif
             for (int s = 0; s < (1UL << (EDGE_PER_WORD)); s++) {
 #pragma HLS unroll
