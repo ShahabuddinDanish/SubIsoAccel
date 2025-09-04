@@ -825,7 +825,7 @@ mwj_readmin_edge_pipelined(
   htb_cache2_t& m_axi,
   hls::stream<readmin_edge_tuple_t>& stream_tuple_in,
   hls::stream<T_BLOOM> stream_filter_in[1UL << K_FUN_LOG],
-  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>> stream_set_out[2],
+  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>> stream_set_out[EDGE_ROW],
   hls::stream<minset_tuple_t>& stream_tuple_out)
 {
   constexpr size_t K_FUN = (1UL << K_FUN_LOG);
@@ -842,7 +842,6 @@ READMIN_EDGE_TASK_LOOP:
 #pragma HLS pipeline II = 1
 
     if (read_new) {
-
       if (stream_tuple_in.read_nb(tuple_in)) {
         if (tuple_in.stop) {
           break;
@@ -888,8 +887,8 @@ READMIN_EDGE_TASK_LOOP:
             set_out.node = indexed_v;
             set_out.last = (edges_processed == (tuple_in.number_of_edges - 1));    /* The 'last' flag is now true for the final VALID edge */
             set_out.valid = test && (tuple_in.indexing_v == indexing_v);
-            stream_set_out[i % 2].write(set_out);
-            
+            stream_set_out[i].write(set_out);
+
             if ((tuple_in.indexing_v == indexing_v) && !test) {
                 bloom_filtered++;
             }
@@ -908,7 +907,7 @@ READMIN_EDGE_TASK_LOOP:
 
 void
 mwj_homomorphism(
-  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>> stream_set_in[2],
+  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>> stream_set_in[EDGE_ROW],
   hls::stream<minset_tuple_t>& stream_tuple_in,
   hls::stream<sol_node_t<vertex_t>>& stream_sol_in,
   hls::stream<sequencebuild_set_t<ap_uint<V_ID_W>>>& stream_set_out)
@@ -930,7 +929,7 @@ mwj_homomorphism(
   };
   typedef ap_uint<2> state_t;
   state_t state = streaming_embedding;
-  ap_uint<1> select = 0;
+  ap_uint<xf::database::details::Log2<EDGE_ROW>::value> select = 0;
 
 HOMOMORPHISM_LOOP:
   while (true) {
@@ -1860,7 +1859,7 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     hls_thread_local hls::stream<sol_node_t<vertex_t>, MAX_QV> re_stream_sol
         ("Readmin edge - partial solution");
     hls_thread_local hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>, S_D>
-      re_stream_set[2];
+      re_stream_set[EDGE_ROW];
     hls_thread_local hls::stream<minset_tuple_t, S_D> re_stream_tuple
         ("Readmin edge - tuples");
 
