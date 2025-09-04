@@ -158,6 +158,7 @@ typedef struct
   /* Minimum set starting and ending row addresses */
   unsigned int rowstart;
   unsigned int cycles;
+  unsigned int number_of_edges;
   bool stop;
 } readmin_edge_tuple_t;
 
@@ -771,6 +772,7 @@ READMIN_COUNTER_TASK_LOOP:
     } else {
       unsigned int end_offset = current_offset;
       unsigned int number_of_edges = end_offset - start_offset_storage;
+      tuple_out.number_of_edges = number_of_edges;
       if (number_of_edges > 0) {
           /* Calculate memory address of the first word containing edges for this set */
           tuple_out.rowstart = hTables[tuple_in.tb_index].start_edges + (start_offset_storage >> EDGES_PER_ROW_LOG);
@@ -792,7 +794,7 @@ READMIN_COUNTER_TASK_LOOP:
 #if DEBUG_PRINTS
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, start_offset=%u\n", start_offset_storage);
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, end_offset=%u\n", end_offset);
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, num_edges=%u\n", number_of_edges);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, num_edges=%u\n", (unsigned int)tuple_out.number_of_edges);
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {v: %d}\n", (unsigned int)tuple_out.indexing_v);
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {tbl: %d}\n", (int)tuple_out.tb_index);
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {rowstart: %u}\n", (unsigned int)tuple_out.rowstart);
@@ -830,8 +832,9 @@ mwj_readmin_edge_pipelined(
   T_BLOOM filter[K_FUN];
   readmin_edge_tuple_t tuple_in;
   bool read_new = true;
-  unsigned int cycles = 0;
-  unsigned int counter = 0;
+  unsigned int cycles_to_run = 0;
+  unsigned int word_counter = 0;
+  unsigned int edges_processed = 0;
 #pragma HLS array_partition variable = filter type = complete dim = 1
 
 READMIN_EDGE_TASK_LOOP:
@@ -857,48 +860,48 @@ READMIN_EDGE_TASK_LOOP:
           filter[g] = stream_filter_in[g].read();
         }
         read_new = false;
-        cycles = tuple_in.cycles;
-        counter = 0;
+        cycles_to_run = tuple_in.cycles;
+        word_counter = 0;
+        edges_processed = 0;
       }
-
     } else {
-
-      if (counter == cycles) {
+      if (word_counter == cycles_to_run) {
         read_new = true;
-      }
+      } else {
+        row_t row = m_axi[tuple_in.rowstart + word_counter];
+        for (int i = 0; i < EDGE_ROW; i++) {
+          #pragma HLS unroll
 
-      row_t row = m_axi[tuple_in.rowstart + counter];
-      for (int i = 0; i < EDGE_ROW; i++) {
-        #pragma HLS unroll
-        ap_uint<V_ID_W> indexing_v, indexed_v;
-        ap_uint<FULL_HASH_W> hash_out;
-        ap_uint<V_ID_W * 2> edge = row.range(((i + 1) << E_W) - 1, i << E_W);
-        indexing_v = edge.range(V_ID_W * 2 - 1, V_ID_W);
-        indexed_v = edge.range(V_ID_W - 1, 0);
+          /* Only process if all edges in the set aren't processed yet */
+          if (edges_processed < tuple_in.number_of_edges) {
+            ap_uint<V_ID_W> indexing_v, indexed_v;
+            ap_uint<FULL_HASH_W> hash_out;
+            ap_uint<V_ID_W * 2> edge = row.range(((i + 1) << E_W) - 1, i << E_W);
+            indexing_v = edge.range(V_ID_W * 2 - 1, V_ID_W);
+            indexed_v = edge.range(V_ID_W - 1, 0);
 
-        hash_wrapper<V_ID_W>(indexed_v, hash_out);
-        bool test = true;
-        bloom_test<T_BLOOM, BLOOM_LOG, K_FUN, FULL_HASH_W>(
-          filter, hash_out, test);
+            hash_wrapper<V_ID_W>(indexed_v, hash_out);
+            bool test = true;
+            bloom_test<T_BLOOM, BLOOM_LOG, K_FUN, FULL_HASH_W>(filter, hash_out, test);
 
-        homomorphism_set_t<ap_uint<V_ID_W>> set_out;
-        set_out.node = indexed_v;
-        set_out.last = (i == EDGE_ROW - 1) && (counter == cycles);
-        set_out.valid = test && tuple_in.indexing_v == indexing_v;
-        stream_set_out[i].write(set_out);
-        
-        if (tuple_in.indexing_v == indexing_v) {
-          if (!test) {
-            bloom_filtered++;
+            homomorphism_set_t<ap_uint<V_ID_W>> set_out;
+            set_out.node = indexed_v;
+            set_out.last = (edges_processed == (tuple_in.number_of_edges - 1));    /* The 'last' flag is now true for the final VALID edge */
+            set_out.valid = test && (tuple_in.indexing_v == indexing_v);
+            stream_set_out[i % 2].write(set_out);
+            
+            if ((tuple_in.indexing_v == indexing_v) && !test) {
+                bloom_filtered++;
+            }
+            edges_processed++;
           }
         }
-      }
-      counter++;
-
+        word_counter++;
 #if DEBUG_STATS
-      debug::readmin_edge_reads += cycles + 1;
-      debug::readmin_n_sets++;
+        debug::readmin_edge_reads += cycles_to_run + 1;
+        debug::readmin_n_sets++;
 #endif /* DEBUG_STATS */
+      }
     }
   }
 }
