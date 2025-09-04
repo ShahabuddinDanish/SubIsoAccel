@@ -605,7 +605,7 @@ FINDMIN_TASK_LOOP:
         tuple_out.iv_pos = tuple_in.iv_pos;
         tuple_out.num_tb_indexed = tuple_in.num_tb_indexed;
 #if DEBUG_PRINTS
-        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {indexing_v: %d\n", (unsigned int)tuple_out.indexing_v);
+        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {indexing_v: %d}\n", (unsigned int)tuple_out.indexing_v);
         hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {tb_index: %d}\n", (int)tuple_out.tb_index);
 #endif
       }
@@ -763,7 +763,7 @@ READMIN_COUNTER_TASK_LOOP:
 #if DEBUG_PRINTS
     hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %u\n", row);
     hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", hTables[tuple_in.tb_index].start_edges);
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u)\n", offset);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u\n", offset);
 #endif
 
     tuple_out.indexing_v = tuple_in.indexing_v;
@@ -1635,9 +1635,11 @@ void mwj_assembly(row_t* m_axi,
   ap_uint<32> nodes_read = 0;
   bool stop = false;
 
-#if DEBUG_INTERFACE
-  hls::print("MWJ_ASSEMBLY: Starting. n_candidate=%d\n", n_candidate);
-  hls::print("MWJ_ASSEMBLY: start_candidate_addr=%d\n", start_candidate);
+#if DEBUG_PRINTS
+  hls::print("\n[mwj_assembly]: STARTING.\n", 0);
+  hls::print("[mwj_assembly]: Starting candidate seeding. n_candidate=%d\n", n_candidate);
+  hls::print("[mwj_assembly]: start_candidate_addr=%d\n", start_candidate);
+  hls::print("[mwj_assembly]: n_queryv=%d\n", n_queryv);
 #endif
 
   // comes from utils.hpp and calculates the log base 2 at compile time
@@ -1647,23 +1649,27 @@ ASSEMBLY_TASK_LOOP:
   do {
     // Test if there are some node from start batch
     if (nodes_read < n_candidate) {
-
-#if DEBUG_INTERFACE
-      hls::print("MWJ_ASSEMBLY_TASK_LOOP: Reading candidate %d\n", (unsigned int)nodes_read);
+#if DEBUG_PRINTS
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Seeding FIFO with candidate %d\n", (unsigned int)nodes_read);
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Seeding FIFO with initial candidate out of %d\n", n_candidate);
 #endif
 
-      ap_uint<32> row_select = nodes_read / VERTICES_PER_ROW;
-
-      // parametric modulo 4 or 16. It selects the correct 32-bit "slot"
+      ap_uint<VERTEX_WIDTH_BIT> row_select = nodes_read / VERTICES_PER_ROW;
       ap_uint<NODES_PER_ROW_LOG> word_select = nodes_read % VERTICES_PER_ROW;
-      
-      row_t row = m_axi[start_candidate + row_select];
-
-      ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1, V_ID_W * word_select);
-
-#if DEBUG_INTERFACE
-      hls::print("MWJ_ASSEMBLY_TASK_LOOP: Read node=%d. About to write to dynfifo.\n", (unsigned int)node);
+#if DEBUG_PRINTS
+      unsigned int read_addr = start_candidate + row_select;
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Accessing m_axi[%d].\n", read_addr);
 #endif
+      row_t row = m_axi[start_candidate + row_select];
+      ap_uint<V_ID_W> node = row.range((V_ID_W * (word_select + 1)) - 1, V_ID_W * word_select);
+#if DEBUG_PRINTS
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Read raw 128-bit word: %s\n", row.to_string(16).c_str());
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Unpacked node %d.\n", (unsigned int)node);
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Unpacked node from slot %d.\n", (unsigned int)word_select);
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Writing to FIFO: FAKE_NODE\n");
+      hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Writing to FIFO: %s\n", node.to_string(16).c_str());
+#endif
+
       /* False extension for single node solutions */
       stream_partial_out.write(FAKE_NODE);
       stream_partial_out.write(node);
@@ -1671,8 +1677,8 @@ ASSEMBLY_TASK_LOOP:
       partial_sol = 1;
       nodes_read++;
     } else {
-#if DEBUG_INTERFACE
-      hls::print("MWJ_ASSEMBLY_TASK_LOOP: Finished candidates. Writing STOP_NODE.\n", 0);
+#if DEBUG_PRINTS
+      if (!stop) hls::print("[ASSEMBLY_TASK_LOOP]: [Seeding] Finished seeding initial candidates. Writing STOP_NODE to FIFO.\n");
 #endif
       stream_partial_out.write(STOP_NODE);
     }
@@ -1681,6 +1687,13 @@ ASSEMBLY_TASK_LOOP:
     do {
 #pragma HLS PIPELINE II = 1
       assembly_node_t<vertex_t> vertex = stream_sol_in.read();
+#if DEBUG_PRINTS
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {node: %d}\n", (unsigned int)vertex.node);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {pos: %d}\n", (int)vertex.pos);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {last: %d}\n", (int)vertex.last);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {sol: %d}\n", (int)vertex.sol);
+      hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Read from pipeline {stop: %d}\n", (int)vertex.stop);
+#endif
       if (vertex.stop){
         stop = true;
         break;
@@ -1696,9 +1709,15 @@ ASSEMBLY_TASK_LOOP:
       }
 
       if (vertex.pos < (n_queryv - 1)){
+#if DEBUG_PRINTS
+        hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] Writing to FIFO: %s\n", dynfifo_node.to_string(16).c_str());
+#endif
         stream_partial_out.write(dynfifo_node);
       } else if (!vertex.sol && !vertex.last) {
         counter++;
+#if DEBUG_PRINTS
+        hls::print("[ASSEMBLY_SET_LOOP]: [Feedback] FOUND A COMPLETE MATCH! Total count: %d\n", (unsigned int)counter);
+#endif
       }
 
       if (!vertex.sol){
@@ -1711,15 +1730,24 @@ ASSEMBLY_TASK_LOOP:
           partial_sol++;
         }
       }
+#if DEBUG_PRINTS
+      hls::print("[ASSEMBLY_SET_LOOP]: [State] partial_sol count: %d\n", (unsigned int)partial_sol);
+#endif
     } while (true);
   } while (!stop);
 
   /* Write in output number of results */
   result = counter;
+#if DEBUG_PRINTS
+  hls::print("[mwj_assembly]: Final result count = %d\n", (unsigned int)result);
+#endif
   for (int g = 0; g < STOP_S; g++) {
 #pragma HLS unroll
     streams_stop[g].write(true);
   }
+#if DEBUG_PRINTS
+  hls::print("[mwj_assembly]: FINISHED.\n", 0);
+#endif
 }
 
 template<size_t BATCH_SIZE_LOG>
