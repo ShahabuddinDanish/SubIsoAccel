@@ -159,6 +159,7 @@ typedef struct
   unsigned int rowstart;
   unsigned int cycles;
   unsigned int number_of_edges;
+  unsigned int start_slot;
   bool stop;
 } readmin_edge_tuple_t;
 
@@ -776,7 +777,6 @@ READMIN_COUNTER_TASK_LOOP:
       if (number_of_edges > 0) {
           /* Calculate memory address of the first word containing edges for this set */
           tuple_out.rowstart = hTables[tuple_in.tb_index].start_edges + (start_offset_storage >> EDGES_PER_ROW_LOG);
-          
 #if DEBUG_PRINTS
           hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %u\n", (unsigned int)tuple_out.rowstart);
           hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", hTables[tuple_in.tb_index].start_edges);
@@ -786,10 +786,13 @@ READMIN_COUNTER_TASK_LOOP:
           unsigned int end_row = hTables[tuple_in.tb_index].start_edges + ((end_offset - 1) >> EDGES_PER_ROW_LOG);
           /* number of words to read is difference + 1 */
           tuple_out.cycles = (end_row - tuple_out.rowstart) + 1;
+          /* Calculate and pass the starting slot index */
+          tuple_out.start_slot = start_offset_storage & ((1 << EDGES_PER_ROW_LOG) - 1);
       } else {
           /* If there are no edges, set cycles to 0 to prevent any reads */
           tuple_out.rowstart = 0;
           tuple_out.cycles = 0;
+          tuple_out.start_slot = 0;
       }
 #if DEBUG_PRINTS
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, start_offset=%u\n", start_offset_storage);
@@ -871,8 +874,11 @@ READMIN_EDGE_TASK_LOOP:
         for (int i = 0; i < EDGE_ROW; i++) {
           #pragma HLS unroll
 
-          /* Only process if all edges in the set aren't processed yet */
-          if (edges_processed < tuple_in.number_of_edges) {
+          /* Determine absolute slot index across all memory words */
+          unsigned int absolute_slot = (word_counter * EDGE_ROW) + i;
+
+          /* Only process edges in the word that are part of the target edge list & not processed yet*/
+          if (absolute_slot >= tuple_in.start_slot && edges_processed < tuple_in.number_of_edges) {
             ap_uint<V_ID_W> indexing_v, indexed_v;
             ap_uint<FULL_HASH_W> hash_out;
             ap_uint<V_ID_W * 2> edge = row.range(((i + 1) << E_W) - 1, i << E_W);
@@ -887,7 +893,7 @@ READMIN_EDGE_TASK_LOOP:
             set_out.node = indexed_v;
             set_out.last = (edges_processed == (tuple_in.number_of_edges - 1));    /* The 'last' flag is now true for the final VALID edge */
             set_out.valid = test && (tuple_in.indexing_v == indexing_v);
-            stream_set_out[i].write(set_out);
+            stream_set_out[edges_processed % EDGE_ROW].write(set_out);   /* Write to output streams sequentially, not based on slot index i */
 
             if ((tuple_in.indexing_v == indexing_v) && !test) {
                 bloom_filtered++;
