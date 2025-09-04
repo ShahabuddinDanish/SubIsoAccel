@@ -74,8 +74,10 @@
 
 #ifndef __SYNTHESIS__
 #define DEBUG_STATS         1
+#define DEBUG_PRINTS        1
 #else
 #define DEBUG_STATS         0
+#define DEBUG_PRINTS        0
 #endif /*__SYNTHESIS__*/
 
 struct alignas(16) edge_struct{
