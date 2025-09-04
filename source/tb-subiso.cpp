@@ -406,10 +406,7 @@ int main(int argc, char** argv) {
     testfile.close();
 
     /* Allocate Memory */
-    row_t* htb_buf0 = new row_t[HASHTABLES_SPACE];
-    row_t* htb_buf1 = new row_t[HASHTABLES_SPACE];
-    row_t* htb_buf2 = new row_t[HASHTABLES_SPACE];
-    row_t* htb_buf3 = new row_t[HASHTABLES_SPACE];
+    row_t* htb_buf = new row_t[HASHTABLES_SPACE];
     row_t* res_buf = new row_t[RESULTS_SPACE];
     row_t* bloom_p = new row_t[BLOOM_SPACE];
 
@@ -430,10 +427,7 @@ int main(int argc, char** argv) {
             std::cout << "  Golden: " << test.golden << std::endl;
 
             /* Initialize variables for each test run */
-            memset(htb_buf0, 0, HASHTABLES_SPACE * sizeof(row_t));
-            memset(htb_buf1, 0, HASHTABLES_SPACE * sizeof(row_t));
-            memset(htb_buf2, 0, HASHTABLES_SPACE * sizeof(row_t));
-            memset(htb_buf3, 0, HASHTABLES_SPACE * sizeof(row_t));
+            memset(htb_buf, 0, HASHTABLES_SPACE * sizeof(row_t));
             memset(res_buf, 0, RESULTS_SPACE * sizeof(row_t));
             memset(bloom_p, 0, BLOOM_SPACE * sizeof(row_t));
 
@@ -486,7 +480,7 @@ int main(int argc, char** argv) {
 
             std::cout << "Starting C Simulation of the kernel..." << std::endl;
             subgraphIsomorphism(
-                htb_buf0, htb_buf1, htb_buf2, htb_buf3,
+                htb_buf, htb_buf, htb_buf, htb_buf,
                 bloom_p,
                 res_buf,
                 nQV, nQE, nDE,
@@ -514,10 +508,7 @@ int main(int argc, char** argv) {
     }
 
     /* Clean up memory */
-    delete[] htb_buf0;
-    delete[] htb_buf1;
-    delete[] htb_buf2;
-    delete[] htb_buf3;
+    delete[] htb_buf;
     delete[] res_buf;
     delete[] bloom_p;
 
