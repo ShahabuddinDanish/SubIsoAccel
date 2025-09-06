@@ -373,6 +373,25 @@ int main(int argc, char** argv) {
 
     std::cout << "C Simulation Finished." << std::endl;
 
+#if DEBUG_INTERFACE
+    std::cout << "\n--- Debug Counters ---" << std::endl;
+    std::string counters_meaning[] = {
+        "hits_findmin", "hits_readmin_counter", "hits_readmin_edge",
+        "hits_intersect", "hits_verify", "reqs_findmin",
+        "reqs_readmin_counter", "reqs_readmin_edge", "reqs_intersect",
+        "reqs_verify", "reqs_dynfifo", "bloom_filtered"
+    };
+    
+    unsigned long all_counters[12];
+    memcpy(all_counters, p_hits, 5 * sizeof(unsigned long));
+    memcpy(all_counters + 5, p_reqs, 7 * sizeof(unsigned long));
+
+    for (int i = 0; i < 12; ++i) {
+        std::cout << "  " << std::setw(25) << std::left << counters_meaning[i] 
+                  << ": " << all_counters[i] << std::endl;
+    }
+#endif
+
     /* Check Results */
     std::cout << "-------------------------------------------" << std::endl;
     std::cout << "Golden Result: " << golden_result << std::endl;
