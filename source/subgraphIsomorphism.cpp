@@ -935,7 +935,11 @@ mwj_homomorphism(
   };
   typedef ap_uint<2> state_t;
   state_t state = streaming_embedding;
-  ap_uint<xf::database::details::Log2<EDGE_ROW>::value> select = 0;
+  static ap_uint<xf::database::details::Log2<EDGE_ROW>::value> select = 0;
+
+#if DEBUG_PRINTS
+  hls::print("\n[mwj_homomorphism]: STARTING. Initial state: streaming_embedding\n", 0);
+#endif
 
 HOMOMORPHISM_LOOP:
   while (true) {
@@ -943,17 +947,28 @@ HOMOMORPHISM_LOOP:
 
     if (state == streaming_embedding) {
       vertex = stream_sol_in.read();
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: [State=EMBEDDING] Read from stream_sol_in: {node: %d}\n", (unsigned int)vertex.node);
+      hls::print("[HOMOMORPHISM_LOOP]: [State=EMBEDDING] Read from stream_sol_in: {pos: %d}\n", (int)vertex.pos);
+      hls::print("[HOMOMORPHISM_LOOP]: [State=EMBEDDING] Read from stream_sol_in: {last: %d}\n", (int)vertex.last);
+#endif
       set_out.node = vertex.node;
       set_out.last = vertex.last;
       set_out.pos = vertex.pos;
       set_out.min_set = false;
       set_out.sol = true;
       set_out.stop = vertex.stop;
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: [State=EMBEDDING] Writing to stream_set_out (forwarding solution node).\n", 0);
+#endif
       stream_set_out.write(set_out);
       curEmb[vertex.pos] = vertex.node;
       curQV = vertex.pos + 1;
       if (vertex.last) {
         state = streaming_minset;
+#if DEBUG_PRINTS
+        hls::print("[HOMOMORPHISM_LOOP]: Last solution node received. State=STREAMING_MINSET\n", 0);
+#endif
       }
       if (vertex.stop) {
         break;
@@ -962,6 +977,10 @@ HOMOMORPHISM_LOOP:
 
       /* Fake node is the tuple about min_set data */
       minset_tuple_t tuple = stream_tuple_in.read();
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: [State=MINSET] Read from stream_tuple_in: {tb_idx: %d}\n", (int)tuple.tb_index);
+      hls::print("[HOMOMORPHISM_LOOP]: [State=MINSET] Read from stream_tuple_in: {iv_pos: %d}\n", (int)tuple.iv_pos);
+#endif
       fake_node.range(7, 0) = tuple.tb_index;
       fake_node.range(15, 8) = tuple.iv_pos;
       fake_node.range(31, 16) = tuple.num_tb_indexed;
@@ -970,13 +989,24 @@ HOMOMORPHISM_LOOP:
       set_out.min_set = true;
       set_out.sol = false;
       set_out.stop = false;
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: [State=MINSET] Writing to stream_set_out (minset metadata).\n", 0);
+#endif
       stream_set_out.write(set_out);
       valid_bits = (1UL << curQV) - 1;
       state = checking;
       select = 0;
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: State=CHECKING\n", 0);
+#endif
     } else if (state == checking) {
       set_in = stream_set_in[select].read();
       select++;
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: [State=CHECKING] Read from stream_set_in: {candidate_node: %d}\n", (unsigned int)set_in.node);
+      hls::print("[HOMOMORPHISM_LOOP]: [State=CHECKING] Read from stream_set_in: {valid: %d}\n", (int)set_in.valid);
+      hls::print("[HOMOMORPHISM_LOOP]: [State=CHECKING] Read from stream_set_in: {last: %d}\n", (int)set_in.last);
+#endif
       ap_uint<V_ID_W> vToVerify = set_in.node;
       equal_bits = 0;
 
@@ -994,23 +1024,44 @@ HOMOMORPHISM_LOOP:
       /* Write out in case of not duplicate in current solution or
       delimeter node */
       if ((equal_bits & valid_bits) == 0 && set_in.valid) {
+#if DEBUG_PRINTS
+        hls::print("[HOMOMORPHISM_LOOP]: [State=CHECKING] Candidate %d is VALID and NOT a duplicate. Writing downstream.\n", (unsigned int)vToVerify);
+#endif
         stream_set_out.write(set_out);
         // std::cout << "Sending node " << vToVerify << std::endl;
       }
 #if DEBUG_STATS
       else {
         debug::homomo_trashed++;
+#if DEBUG_PRINTS
+        if (set_in.valid)
+          hls::print("[HOMOMORPHISM_LOOP]: [State=CHECKING] Candidate %d is a DUPLICATE. Filtering out.\n", (unsigned int)vToVerify);
+        else
+          hls::print("[HOMOMORPHISM_LOOP]: [State=CHECKING] Candidate %d is INVALID (bloom filter). Filtering out.\n", (unsigned int)vToVerify);
+#endif
       }
 #endif
       if (set_in.last) {
         state = last;
+#if DEBUG_PRINTS
+        hls::print("[HOMOMORPHISM_LOOP]: Last candidate in set received. State=LAST\n", 0);
+#endif
       }
     } else {
       set_out.last = true;
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: [State=LAST] Writing final delimiter to stream_set_out.\n", 0);
+#endif
       stream_set_out.write(set_out);
       state = streaming_embedding;
+#if DEBUG_PRINTS
+      hls::print("[HOMOMORPHISM_LOOP]: State=STREAMING_EMBEDDING\n", 0);
+#endif
     }
   }
+#if DEBUG_PRINTS
+  hls::print("[mwj_homomorphism]: FINISHED.\n", 0);
+#endif
 }
 
 template<size_t BATCH_SIZE_LOG>
