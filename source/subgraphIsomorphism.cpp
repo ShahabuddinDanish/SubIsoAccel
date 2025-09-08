@@ -869,8 +869,8 @@ READMIN_EDGE_TASK_LOOP:
 
       row_t row = m_axi[tuple_in.rowstart + counter];
 #if TRACE_MULTIWAY_JOIN
-          hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word %d\n", word_counter);
-          hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word at addr %d.\n", (unsigned int)(tuple_in.rowstart + word_counter));
+          hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word %d\n", counter);
+          hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word at addr %d.\n", (unsigned int)(tuple_in.rowstart + counter));
           hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word, Data: %s\n", row.to_string(16).c_str());
 #endif
       for (int i = 0; i < EDGE_ROW; i++) {
