@@ -818,6 +818,10 @@ mwj_readmin_edge_pipelined(
   unsigned int counter = 0;
 #pragma HLS array_partition variable = filter type = complete dim = 1
 
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_readmin_edge_pipelined]: STARTING.\n", 0);
+#endif
+
 READMIN_EDGE_TASK_LOOP:
   while (true) {
 #pragma HLS pipeline II = 1
@@ -825,6 +829,18 @@ READMIN_EDGE_TASK_LOOP:
     if (read_new) {
 
       if (stream_tuple_in.read_nb(tuple_in)) {
+
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[READMIN_EDGE_TASK_LOOP]: NEW JOB RECEIVED.\n", 0);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: stop: %d\n", (int)tuple_in.stop);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: tb_index: %d\n", (unsigned int)tuple_in.tb_index);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: iv_pos: %d\n", (unsigned int)tuple_in.iv_pos);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: num_tb_indexed: %d\n", (unsigned int)tuple_in.num_tb_indexed);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: indexing_v: %d\n", (unsigned int)tuple_in.indexing_v);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: rowstart: %d\n", (unsigned int)tuple_in.rowstart);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: cycles(words): %d\n", (unsigned int)tuple_in.cycles);
+#endif
+
         if (tuple_in.stop) {
           break;
         }
@@ -852,6 +868,11 @@ READMIN_EDGE_TASK_LOOP:
       }
 
       row_t row = m_axi[tuple_in.rowstart + counter];
+#if TRACE_MULTIWAY_JOIN
+          hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word %d\n", word_counter);
+          hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word at addr %d.\n", (unsigned int)(tuple_in.rowstart + word_counter));
+          hls::print("[READMIN_EDGE_TASK_LOOP]: Reading word, Data: %s\n", row.to_string(16).c_str());
+#endif
       for (int i = 0; i < EDGE_ROW; i++) {
 #pragma HLS unroll
         ap_uint<V_ID_W> indexing_v, indexed_v;
@@ -869,6 +890,12 @@ READMIN_EDGE_TASK_LOOP:
         set_out.node = indexed_v;
         set_out.last = (i == EDGE_ROW - 1) && (counter == cycles);
         set_out.valid = test && tuple_in.indexing_v == indexing_v;
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[READMIN_EDGE_TASK_LOOP]: Writing candidate. Node: %d\n", (unsigned int)set_out.node);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: Writing candidate. Valid: %d\n", (int)set_out.valid);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: Writing candidate. Last: %d\n", (int)set_out.last);
+        hls::print("[READMIN_EDGE_TASK_LOOP]: Writing candidate. Stream: %d\n", i);
+#endif
         stream_set_out[i].write(set_out);
         
         if (tuple_in.indexing_v == indexing_v) {
@@ -885,6 +912,9 @@ READMIN_EDGE_TASK_LOOP:
 #endif /* DEBUG_STATS */
     }
   }
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_readmin_edge_pipelined]: FINISHED.\n", 0);
+#endif
 }
 
 void
