@@ -340,7 +340,7 @@ template<size_t W>
 void
 hash_wrapper(ap_uint<W> key_val, ap_uint<64>& hash_val)
 {
-#pragma HLS inline off
+//#pragma HLS inline off
   xf::database::details::hashlookup3_core<W>(key_val, hash_val);
 }
 
@@ -348,7 +348,8 @@ template<typename T_BLOOM, size_t BLOOM_LOG, size_t K_FUN, size_t FULL_HASH_W>
 void
 bloom_test(T_BLOOM filter[K_FUN], ap_uint<64> hash_val, bool& test)
 {
-#pragma HLS inline off
+#pragma HLS pipeline II=1
+//#pragma HLS inline off
   for (int g = 0; g < K_FUN; g++) {
 #pragma HLS unroll
     ap_uint<BLOOM_LOG> idx =
@@ -831,84 +832,138 @@ mwj_readmin_edge_pipelined(
   hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>> stream_set_out[EDGE_ROW],
   hls::stream<minset_tuple_t>& stream_tuple_out)
 {
+  #pragma HLS pipeline II=1 style=flp
   constexpr size_t K_FUN = (1UL << K_FUN_LOG);
-  T_BLOOM filter[K_FUN];
-  readmin_edge_tuple_t tuple_in;
-  bool read_new = true;
-  unsigned int cycles_to_run = 0;
-  unsigned int word_counter = 0;
-  unsigned int edges_processed = 0;
-#pragma HLS array_partition variable = filter type = complete dim = 1
+
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_readmin_edge_pipelined]: STARTING.\n", int(0));
+#endif
 
 READMIN_EDGE_TASK_LOOP:
-  while (true) {
-#pragma HLS pipeline II = 1
+  while(true) {
+    readmin_edge_tuple_t tuple_in = stream_tuple_in.read();
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[READMIN_EDGE_TASK_LOOP]: NEW JOB RECEIVED.\n", int(0));
+    hls::print("[READMIN_EDGE_TASK_LOOP]: stop: %d\n", (int)tuple_in.stop);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: tb_index: %d\n", (unsigned int)tuple_in.tb_index);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: iv_pos: %d\n", (unsigned int)tuple_in.iv_pos);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: num_tb_indexed: %d\n", (unsigned int)tuple_in.num_tb_indexed);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: indexing_v: %d\n", (unsigned int)tuple_in.indexing_v);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: num_edges: %d\n", (unsigned int)tuple_in.number_of_edges);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: rowstart: %d\n", (unsigned int)tuple_in.rowstart);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: cycles(words): %d\n", (unsigned int)tuple_in.cycles);
+    hls::print("[READMIN_EDGE_TASK_LOOP]: start_slot: %d\n", (unsigned int)tuple_in.start_slot);
+#endif
 
-    if (read_new) {
-      if (stream_tuple_in.read_nb(tuple_in)) {
-        if (tuple_in.stop) {
-          break;
-        }
-        
-        minset_tuple_t tuple_out;
-        tuple_out.stop = false;
-        tuple_out.tb_index = tuple_in.tb_index;
-        tuple_out.iv_pos = tuple_in.iv_pos;
-        tuple_out.num_tb_indexed = tuple_in.num_tb_indexed;
-        stream_tuple_out.write(tuple_out);
-        
+    if (tuple_in.stop) {
+      break;
+    }
+
+    /* Forward metadata */
+    minset_tuple_t tuple_out;
+    tuple_out.stop = false;
+    tuple_out.tb_index = tuple_in.tb_index;
+    tuple_out.iv_pos = tuple_in.iv_pos;
+    tuple_out.num_tb_indexed = tuple_in.num_tb_indexed;
+    stream_tuple_out.write(tuple_out);
+
+    if (tuple_in.number_of_edges == 0) {
+        /* This set is empty. Send a single "last" signal downstream to
+        unblock the consumer, then stay in this state to wait for the next job. */
+        homomorphism_set_t<ap_uint<V_ID_W>> empty_set;
+        empty_set.valid = false;
+        empty_set.last = true;
+#if TRACE_MULTIWAY_JOIN
+        hls::print("[READMIN_EDGE_TASK_LOOP]: Empty set detected. Writing single 'last' tuple.\n", int(0));
+#endif
+        stream_set_out.write(empty_set);
+        continue;
+    } else {
+        /* This is a valid job. Load filters and prepare for processing. */
+        T_BLOOM filter[K_FUN];
+        #pragma HLS array_partition variable=filter type=complete dim=1
+
         for (int g = 0; g < K_FUN; g++) {
-#pragma HLS unroll
+          #pragma HLS unroll
           filter[g] = stream_filter_in[g].read();
         }
-        read_new = false;
-        cycles_to_run = tuple_in.cycles;
-        word_counter = 0;
-        edges_processed = 0;
-      }
-    } else {
-      if (word_counter == cycles_to_run) {
-        read_new = true;
-      } else {
-        row_t row = m_axi[tuple_in.rowstart + word_counter];
-        for (int i = 0; i < EDGE_ROW; i++) {
-          #pragma HLS unroll
 
-          /* Determine absolute slot index across all memory words */
-          unsigned int absolute_slot = (word_counter * EDGE_ROW) + i;
+        unsigned int edges_to_find = tuple_in.number_of_edges;
+        unsigned int cycles_to_run = tuple_in.cycles;
+        
+        PROCESS_WORDS_LOOP:
+        for (unsigned int word_counter = 0; word_counter < cycles_to_run; ++word_counter) {
+          #pragma HLS pipeline
+          row_t row = m_axi[tuple_in.rowstart + word_counter];
+#if TRACE_MULTIWAY_JOIN
+          hls::print("[PROCESS_WORDS_LOOP]: Reading word %d\n", word_counter);
+          hls::print("[PROCESS_WORDS_LOOP]: Reading word at addr %d.\n", (unsigned int)(tuple_in.rowstart + word_counter));
+          //hls::print("[PROCESS_WORDS_LOOP]: Reading word, Data: %s\n", row.to_string(16).c_str());
+          hls::print("[PROCESS_WORDS_LOOP]: Reading word, Data: %d\n", (unsigned int)row);
+#endif
 
-          /* Only process edges in the word that are part of the target edge list & not processed yet*/
-          if (absolute_slot >= tuple_in.start_slot && edges_processed < tuple_in.number_of_edges) {
-            ap_uint<V_ID_W> indexing_v, indexed_v;
-            ap_uint<FULL_HASH_W> hash_out;
-            ap_uint<V_ID_W * 2> edge = row.range(((i + 1) << E_W) - 1, i << E_W);
-            indexing_v = edge.range(V_ID_W * 2 - 1, V_ID_W);
-            indexed_v = edge.range(V_ID_W - 1, 0);
+          /* Inner loop unpacks parallel edges from a single word */
+          UNPACK_EDGES_LOOP:
+          for (int i = 0; i < EDGE_ROW; i++) {
+              #pragma HLS unroll
 
-            hash_wrapper<V_ID_W>(indexed_v, hash_out);
-            bool test = true;
-            bloom_test<T_BLOOM, BLOOM_LOG, K_FUN, FULL_HASH_W>(filter, hash_out, test);
+              /* Only process edges in the word that are part of the target edge list & not processed yet*/
+              unsigned int absolute_slot_offset = (word_counter * EDGE_ROW) + i;
+              if (absolute_slot_offset >= tuple_in.start_slot && edges_to_find > 0) {
+                  ap_uint<V_ID_W> indexing_v, indexed_v;
+                  ap_uint<FULL_HASH_W> hash_out;
+                  ap_uint<V_ID_W * 2> edge = row.range(((i + 1) << E_W) - 1, i << E_W);
+                  indexing_v = edge.range(V_ID_W * 2 - 1, V_ID_W);
+                  indexed_v = edge.range(V_ID_W - 1, 0);
 
-            homomorphism_set_t<ap_uint<V_ID_W>> set_out;
-            set_out.node = indexed_v;
-            set_out.last = (edges_processed == (tuple_in.number_of_edges - 1));    /* The 'last' flag is now true for the final VALID edge */
-            set_out.valid = test && (tuple_in.indexing_v == indexing_v);
-            stream_set_out[edges_processed % EDGE_ROW].write(set_out);   /* Write to output streams sequentially, not based on slot index i */
+                  hash_wrapper<V_ID_W>(indexed_v, hash_out);
+                  bool test = true;
+                  bloom_test<T_BLOOM, BLOOM_LOG, K_FUN, FULL_HASH_W>(filter, hash_out, test);
 
-            if ((tuple_in.indexing_v == indexing_v) && !test) {
-                bloom_filtered++;
-            }
-            edges_processed++;
+                  homomorphism_set_t<ap_uint<V_ID_W>> set_out;
+                  set_out.node = indexed_v;
+                  set_out.valid = test && indexing_v == tuple_in.indexing_v;
+                  
+                  edges_to_find--;
+                  set_out.last = (edges_to_find == 0);  /* The 'last' flag is now true for the final VALID edge */
+                  #if TRACE_MULTIWAY_JOIN
+                    hls::print("[UNPACK_EDGES_LOOP]: Writing candidate. Node: %d\n", (unsigned int)set_out.node);
+                    hls::print("[UNPACK_EDGES_LOOP]: Writing candidate. Valid: %d\n", (int)set_out.valid);
+                    hls::print("[UNPACK_EDGES_LOOP]: Writing candidate. Last: %d\n", (int)set_out.last);
+                    hls::print("[UNPACK_EDGES_LOOP]: Writing candidate. Edges Left: %d\n", edges_to_find);
+                  #endif
+                  stream_set_out.write(set_out);  /* Write to output stream sequentially */
+
+                  if (tuple_in.indexing_v == indexing_v) {
+                    if (!test) {
+                       bloom_filtered++;
+                    }
+                  }
+              }
+          } /* End of UNPACK_EDGES_LOOP */
+          
+          if (edges_to_find == 0) {
+              break;  /* Exit early if all edges have been found */
           }
+          #if DEBUG_STATS
+              debug::readmin_edge_reads += cycles_to_run + 1;
+              debug::readmin_n_sets++;
+          #endif /* DEBUG_STATS */
+        } /* End of PROCESS_WORDS_LOOP */
+        
+        /* If after checking all words no edges are found (maybe due to a
+        or bad data), send a "last" signal to prevent downstream stalls. */
+        if (edges_to_find > 0) {
+            homomorphism_set_t<ap_uint<V_ID_W>> final_delimiter;
+            final_delimiter.valid = false; /* This is not a real node */
+            final_delimiter.last = true;
+            stream_set_out.write(final_delimiter);
         }
-        word_counter++;
-#if DEBUG_STATS
-        debug::readmin_edge_reads += cycles_to_run + 1;
-        debug::readmin_n_sets++;
-#endif /* DEBUG_STATS */
-      }
     }
-  }
+  } /* End of READMIN_EDGE_TASK_LOOP */
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_readmin_edge_pipelined]: FINISHED.\n", int(0));
+#endif
 }
 
 void
