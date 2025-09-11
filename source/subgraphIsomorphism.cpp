@@ -529,150 +529,186 @@ void mwj_findmin(row_t* bloom_p,
 {
   constexpr size_t K_FUN = (1UL << K_FUN_LOG);
   T_BLOOM filter[K_FUN];
-  readmin_counter_tuple_t tuple_out;
-  findmin_tuple_t tuple_in;
-  unsigned int min_size = ~0;
-  unsigned long addr_counter;
+
+  readmin_counter_tuple_t min_set_data;
+  findmin_tuple_t current_set_tuple;
+  unsigned int min_size;
+
 #pragma HLS array_partition variable = filter type = complete dim = 1
 
-  tuple_out.stop = false;
-
-#if DEBUG_PRINTS
-    hls::print("\n[mwj_findmin]: STARTING.\n", 0);
+#if TRACE_MULTIWAY_JOIN
+    hls::print("\n[mwj_findmin]: STARTING.\n", int(0));
 #endif
 
-FINDMIN_TASK_LOOP:
-  while (true) {
-#pragma HLS pipeline II = 4 style = flp
+FINDMIN_MAIN_LOOP:
+  while(true) {
+    #pragma HLS PIPELINE II = 4 style = flp
 
-    tuple_in = stream_tuple_in.read();
-    unsigned short bloom_s = 0;
-
+    /* Wait for the start of a new job, indicated by the RESET tuple */
+    findmin_tuple_t tuple_in = stream_tuple_in.read();
     if (tuple_in.stop) {
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: STOP tuple received. Terminating.\n", 0);
-#endif
+      #if TRACE_MULTIWAY_JOIN
+        hls::print("[FINDMIN_MAIN_LOOP]: STOP tuple received. Terminating.\n", int(0));
+      #endif
       break;
-    } else if (tuple_in.reset) {
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: RESET tuple received. Initializing bloom filter to all 1s.\n", 0);
+    }
+
+#ifndef __SYNTHESIS__
+    /* We expect a reset tuple to start a job */
+    assert(tuple_in.reset); 
 #endif
-      for (int s = 0; s < K_FUN; s++) {
-#pragma HLS unroll
+
+    #if TRACE_MULTIWAY_JOIN
+      hls::print("[FINDMIN_MAIN_LOOP]: RESET tuple received. Initializing bloom filter to all 1s.\n", int(0));
+    #endif
+
+    /* Initialize the state for THIS job */
+    for (int s = 0; s < K_FUN; s++) {
+        #pragma HLS unroll
         filter[s] = ~0;
+    }
+    min_size = ~0;
+
+    /* Process all sets belonging to a single intersection job */
+FINDMIN_INNER_LOOP:
+    while(true) {
+      #pragma HLS PIPELINE II = 4 style = flp
+
+      current_set_tuple = stream_tuple_in.read();
+
+      if (current_set_tuple.stop) {
+        break; /* Exits INNER loop */
       }
-    } else {
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: Read tuple, indexing_v=%d\n", (unsigned int)tuple_in.indexing_v);
-      hls::print("[FINDMIN_TASK_LOOP]: Read tuple, tb_index=%d\n", (int)tuple_in.tb_index);
-#endif
-      // Computing addresses of indexed sets
+
+      /* Calculate bloom size for the current set */
+      unsigned short bloom_s = 0;
+      #if TRACE_MULTIWAY_JOIN
+        hls::print("[FINDMIN_TASK_LOOP]: Read tuple, indexing_v=%d\n", (unsigned int)current_set_tuple.indexing_v);
+        hls::print("[FINDMIN_TASK_LOOP]: Read tuple, tb_index=%d\n", (int)current_set_tuple.tb_index);
+      #endif
+
+      /* Computing addresses of indexed sets */
       ap_uint<LKP3_HASH_W> hash_out;
       ap_uint<MAX_HASH_W> hash_trimmed;
-      xf::database::details::hashlookup3_core<V_ID_W>(tuple_in.indexing_v, hash_out);
+      xf::database::details::hashlookup3_core<V_ID_W>(current_set_tuple.indexing_v, hash_out);
       hash_trimmed = hash_out;
       hash_trimmed = hash_trimmed.range(hash1_w - 1, 0);
 
-      // Calculate address of the 512-bit word
-      unsigned int word_addr_512 = (tuple_in.tb_index * (1UL << hash1_w)) + hash_trimmed;
+      /* Calculate address of the 512-bit word */
+      unsigned int word_addr_512 = (current_set_tuple.tb_index * (1UL << hash1_w)) + hash_trimmed;
 
       // Read the full 512-bit word from DDR
       row_t bloom_word = bloom_p[word_addr_512];
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: Reading bloom filter from base address: %u\n", word_addr_512);
-#endif
+      #if TRACE_MULTIWAY_JOIN
+        //hls::print("[FINDMIN_TASK_LOOP]: Reading bloom filter from base address: %u\n", word_addr_512);
+        hls::print("[FINDMIN_TASK_LOOP]: Reading bloom filter from base address: %d\n", word_addr_512);
+      #endif
+
       for (int s = 0; s < K_FUN; s++) {
-#pragma HLS unroll
-        // Unpack the correct 128-bit bloom_t from its slot                        
+        #pragma HLS unroll
+        /* Unpack the correct 128-bit bloom_t from its slot */                    
         T_BLOOM set_bloom = bloom_word.range(INSTR_WIDTH * (s + 1) - 1, INSTR_WIDTH * s);
         bloom_s += bloom_intersect<T_BLOOM, BLOOM_LOG>(filter[s], set_bloom);
       }
       reqs_findmin++;
-#if DEBUG_STATS
-      debug::findmin_reads++;
-#endif
-    }
-    bloom_s >>= K_FUN_LOG;
+      #if DEBUG_STATS
+        debug::findmin_reads++;
+      #endif
+      bloom_s >>= K_FUN_LOG;
 
-    if (tuple_in.reset) {
-      min_size = ~0;
-    } else {
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: Approx set size = %d.\n", (int)bloom_s);
-      hls::print("[FINDMIN_TASK_LOOP]: Current min_size = %d.\n", (int)min_size);
-#endif
-      if (bloom_s < min_size) {
-        min_size = bloom_s;
-        tuple_out.indexing_v = tuple_in.indexing_v;
-        tuple_out.tb_index = tuple_in.tb_index;
-        tuple_out.iv_pos = tuple_in.iv_pos;
-        tuple_out.num_tb_indexed = tuple_in.num_tb_indexed;
-#if DEBUG_PRINTS
-        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {indexing_v: %d}\n", (unsigned int)tuple_out.indexing_v);
-        hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {tb_index: %d}\n", (int)tuple_out.tb_index);
-#endif
+      #if TRACE_MULTIWAY_JOIN
+        hls::print("[FINDMIN_TASK_LOOP]: Approx set size = %d.\n", (int)bloom_s);
+        hls::print("[FINDMIN_TASK_LOOP]: Current min_size = %d.\n", (int)min_size);
+      #endif
+
+      /* If this is the first set, it's the minimum by default.
+      Otherwise, compare it with the current minimum */
+      if (min_size == (unsigned int)(~0) || bloom_s < min_size) {
+          min_size = bloom_s;
+          // Store the metadata of this new minimum set
+          min_set_data.indexing_v = current_set_tuple.indexing_v;
+          min_set_data.tb_index = current_set_tuple.tb_index;
+          min_set_data.iv_pos = current_set_tuple.iv_pos;
+          min_set_data.num_tb_indexed = current_set_tuple.num_tb_indexed;
+          #if TRACE_MULTIWAY_JOIN
+            hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {indexing_v: %d}\n", (unsigned int)min_set_data.indexing_v);
+            hls::print("[FINDMIN_TASK_LOOP]: New minimum found! {tb_index: %d}\n", (int)min_set_data.tb_index);
+          #endif
+      }
+
+      /* If this is the last tuple for this job, break the inner loop */
+      if (current_set_tuple.last) {
+          break;
       }
     }
 
-    if (tuple_in.last) {
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: Last tuple in set. Writing chosen min set downstream.\n", 0);
-      hls::print("[FINDMIN_TASK_LOOP]: Final min set {indexing_v: %d}\n", (unsigned int)tuple_out.indexing_v);
-      hls::print("[FINDMIN_TASK_LOOP]: Final min set {tbl: %d}\n", (int)tuple_out.tb_index);
-      hls::print("[FINDMIN_TASK_LOOP]: Final min set with approx size %d\n", (int)min_size);
-#endif
+    if(!current_set_tuple.stop) {
+
+      /* True minimum found for this job. Perform the hash and create the output tuples */ 
+      #if TRACE_MULTIWAY_JOIN
+        hls::print("[FINDMIN_TASK_LOOP]: Last tuple in set. Writing chosen min set downstream.\n", int(0));
+        hls::print("[FINDMIN_TASK_LOOP]: Final min set {indexing_v: %d}\n", (unsigned int)min_set_data.indexing_v);
+        hls::print("[FINDMIN_TASK_LOOP]: Final min set {tbl: %d}\n", (int)min_set_data.tb_index);
+        hls::print("[FINDMIN_TASK_LOOP]: Final min set with approx size %d\n", (int)min_size);
+      #endif
       ap_uint<LKP3_HASH_W> hash_out;
       ap_uint<MAX_HASH_W> hash_trimmed;
-      xf::database::details::hashlookup3_core<V_ID_W>(tuple_out.indexing_v, hash_out);
+      xf::database::details::hashlookup3_core<V_ID_W>(min_set_data.indexing_v, hash_out);
       hash_trimmed = hash_out;
       hash_trimmed = hash_trimmed.range(hash1_w - 1, 0);
 
       /* Tuple for the START address of the set */
-      addr_counter = hash_trimmed - 1;
+      readmin_counter_tuple_t start_tuple = min_set_data;  /* Copy common metadata */
+      ap_uint<64> addr_counter = hash_trimmed - 1;
       addr_counter <<= hash2_w;
       addr_counter += (1UL << hash2_w) - 1;
-      tuple_out.addr_counter = addr_counter;
-      if (hash_trimmed == 0) {
-        tuple_out.skip_counter = true;
-      }
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[0] (start address): {addr_counter: %s}\n", tuple_out.addr_counter.to_string(10).c_str());
-      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[0] (start address): {skip: %d}\n", (int)tuple_out.skip_counter);
-#endif
-      stream_tuple_out[0].write(tuple_out);
+      start_tuple.addr_counter = addr_counter;
+      start_tuple.skip_counter = (hash_trimmed == 0);
+      #if TRACE_MULTIWAY_JOIN
+        //hls::print("[FINDMIN_TASK_LOOP]: Writing to stream (start address): {addr_counter: %s}\n", start_tuple.addr_counter.to_string(10).c_str());
+        hls::print("[FINDMIN_TASK_LOOP]: Writing to stream (start address): {addr_counter: %d}\n", start_tuple.addr_counter);
+        hls::print("[FINDMIN_TASK_LOOP]: Writing to stream (start address): {skip: %d}\n", (int)start_tuple.skip_counter);
+      #endif
+      stream_tuple_out.write(start_tuple);
 
       /* Tuple for the END address of the set */
+      readmin_counter_tuple_t end_tuple = min_set_data;  /* Copy common metadata */
       addr_counter = hash_trimmed;
       addr_counter <<= hash2_w;
       addr_counter += (1UL << hash2_w) - 1;
-      tuple_out.addr_counter = addr_counter;
-      tuple_out.skip_counter = false;
-#if DEBUG_PRINTS
-      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[1] (end address): {addr_counter: %s}\n", tuple_out.addr_counter.to_string(10).c_str());
-      hls::print("[FINDMIN_TASK_LOOP]: Writing to stream[1] (end address): {skip: %d}\n", (int)tuple_out.skip_counter);
-#endif
-      stream_tuple_out[1].write(tuple_out);
+      end_tuple.addr_counter = addr_counter;
+      end_tuple.skip_counter = false;
+      #if TRACE_MULTIWAY_JOIN
+        //hls::print("[FINDMIN_TASK_LOOP]: Writing to stream (end address): {addr_counter: %s}\n", end_tuple.addr_counter.to_string(10).c_str());
+        hls::print("[FINDMIN_TASK_LOOP]: Writing to stream (end address): {addr_counter: %d}\n", end_tuple.addr_counter);
+        hls::print("[FINDMIN_TASK_LOOP]: Writing to stream (end address): {skip: %d}\n", (int)end_tuple.skip_counter);
+      #endif
+      stream_tuple_out.write(end_tuple);
 
       for (int g = 0; g < K_FUN; g++) {
-#pragma HLS unroll
-#if DEBUG_PRINTS
-        hls::print("[FINDMIN_TASK_LOOP]: Writing to bloom filter[%d]\n", g);
-        hls::print("[FINDMIN_TASK_LOOP]: Writing intersected bloom filter: %s\n", filter[g].to_string(16).c_str());
-#endif
+        #pragma HLS unroll
+        #if TRACE_MULTIWAY_JOIN
+          hls::print("[FINDMIN_TASK_LOOP]: Writing to bloom filter[%d]\n", g);
+          //hls::print("[FINDMIN_TASK_LOOP]: Writing intersected bloom filter: %s\n", filter[g].to_string(16).c_str());
+          hls::print("[FINDMIN_TASK_LOOP]: Writing intersected bloom filter: %d\n", (unsigned int)filter[g]);
+        #endif
         stream_filter_out[g].write(filter[g]);
       }
+    } else {
+      break;
     }
   }
 
   /* Propagate stop node */
-  tuple_out.stop = true;
-#if DEBUG_PRINTS
-  hls::print("[mwj_findmin]: Loop FINISHED. Writing STOP signal.\n", 0);
-#endif
-  stream_tuple_out[0].write(tuple_out);
-#if DEBUG_PRINTS
-  hls::print("[mwj_findmin]: FINISHED.\n", 0);
-#endif
+  readmin_counter_tuple_t stop_out;
+  stop_out.stop = true;
+  #if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_findmin]: Loop FINISHED. Writing STOP signal.\n", int(0));
+  #endif
+  stream_tuple_out.write(stop_out);
+  #if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_findmin]: FINISHED.\n", int(0));
+  #endif
 }
 
 void
