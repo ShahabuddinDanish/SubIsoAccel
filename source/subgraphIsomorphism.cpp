@@ -829,7 +829,7 @@ mwj_readmin_edge_pipelined(
   htb_cache2_t& m_axi,
   hls::stream<readmin_edge_tuple_t>& stream_tuple_in,
   hls::stream<T_BLOOM> stream_filter_in[1UL << K_FUN_LOG],
-  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>> stream_set_out[EDGE_ROW],
+  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>>& stream_set_out,
   hls::stream<minset_tuple_t>& stream_tuple_out)
 {
   #pragma HLS pipeline II=1 style=flp
@@ -968,7 +968,7 @@ READMIN_EDGE_TASK_LOOP:
 
 void
 mwj_homomorphism(
-  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>> stream_set_in[EDGE_ROW],
+  hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>>& stream_set_in,
   hls::stream<minset_tuple_t>& stream_tuple_in,
   hls::stream<sol_node_t<vertex_t>>& stream_sol_in,
   hls::stream<sequencebuild_set_t<ap_uint<V_ID_W>>>& stream_set_out)
@@ -990,10 +990,9 @@ mwj_homomorphism(
   };
   typedef ap_uint<2> state_t;
   state_t state = streaming_embedding;
-  static ap_uint<xf::database::details::Log2<EDGE_ROW>::value> select = 0;
 
-#if DEBUG_PRINTS
-  hls::print("\n[mwj_homomorphism]: STARTING. Initial state: streaming_embedding\n", 0);
+#if TRACE_MULTIWAY_JOIN
+  hls::print("\n[mwj_homomorphism]: STARTING. Initial state: streaming_embedding\n", int(0));
 #endif
 
 HOMOMORPHISM_LOOP:
@@ -1959,7 +1958,8 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     /* Findmin data out */
     hls_thread_local hls::stream<bloom_t, 4>
       p_stream_filter[1UL << K_FUNCTIONS];
-    hls_thread_local hls::stream<readmin_counter_tuple_t, S_D> p_stream_tuple[2];
+    hls_thread_local hls::stream<readmin_counter_tuple_t, S_D> p_stream_tuple
+        ("Findmin_to_ReadminCounter");
 
     /* Readmin counter data out */    
     hls_thread_local hls::stream<bloom_t, 4>
@@ -1971,7 +1971,7 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
     hls_thread_local hls::stream<sol_node_t<vertex_t>, MAX_QV> re_stream_sol
         ("Readmin edge - partial solution");
     hls_thread_local hls::stream<homomorphism_set_t<ap_uint<V_ID_W>>, S_D>
-      re_stream_set[EDGE_ROW];
+      re_stream_set;
     hls_thread_local hls::stream<minset_tuple_t, S_D> re_stream_tuple
         ("Readmin edge - tuples");
 
@@ -2205,14 +2205,14 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
                               hash1_w,
                               hash2_w,
                               std::ref(e_stream_tuple),
-                              p_stream_tuple,
+                              std::ref(p_stream_tuple),
                               p_stream_filter);
 
     std::thread mwj_readmin_counter_t(
         mwj_readmin_counter,
         hTables0,
         htb_buf1,
-        p_stream_tuple,
+        std::ref(p_stream_tuple),
         std::ref(rc_stream_tuple));
 
     std::thread mwj_readmin_edge_t(
@@ -2220,11 +2220,11 @@ multiwayJoin(ap_uint<DDR_W>* htb_buf0,
       std::ref(htb_cache2),
       std::ref(rc_stream_tuple),
       rc_stream_filter,
-      re_stream_set,
+      std::ref(re_stream_set),
       std::ref(re_stream_tuple));
 
     std::thread mwj_homomorphism_t(mwj_homomorphism,
-                                   re_stream_set,
+                                   std::ref(re_stream_set),
                                    std::ref(re_stream_tuple),
                                    std::ref(re_stream_sol),
                                    std::ref(h_stream_set));
