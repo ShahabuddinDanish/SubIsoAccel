@@ -524,7 +524,7 @@ void mwj_findmin(row_t* bloom_p,
             const unsigned char hash1_w,
             const unsigned char hash2_w,
             hls::stream<findmin_tuple_t>& stream_tuple_in,
-            hls::stream<readmin_counter_tuple_t> stream_tuple_out[2],
+            hls::stream<readmin_counter_tuple_t>& stream_tuple_out,
             hls::stream<T_BLOOM> stream_filter_out[1 << K_FUN_LOG])
 {
   constexpr size_t K_FUN = (1UL << K_FUN_LOG);
@@ -688,17 +688,18 @@ mwj_bypassfilter(hls::stream<bloom_t> stream_filter_in[1UL << K_FUNCTIONS],
 void
 mwj_readmin_counter(AdjHT* hTables,
                     row_t* m_axi,
-                    hls::stream<readmin_counter_tuple_t> stream_tuple_in[2],
+                    hls::stream<readmin_counter_tuple_t>& stream_tuple_in,
                     hls::stream<readmin_edge_tuple_t>& stream_tuple_out)
 {
-  readmin_counter_tuple_t tuple_in;
-  readmin_edge_tuple_t tuple_out;
-  unsigned char stream_p = 0;
-  tuple_out.stop = false;
+  //readmin_counter_tuple_t tuple_in;
+  //readmin_edge_tuple_t tuple_out;
+  //unsigned char stream_p = 0;
+  //tuple_out.stop = false;
   
   /* Store the start offset when received from the first stream */
-  static unsigned int start_offset_storage; 
+  //static unsigned int start_offset_storage; 
   const int EDGES_PER_ROW_LOG = DDR_BIT - E_W;
+  const int COUNTERS_PER_ROW_LOG = DDR_BIT - C_W; /* Calculate 32-bit counters fit in 512-bit memory word */
 
 #if DEBUG_PRINTS
     hls::print("[mwj_readmin_counter]: STARTING.\n", 0);
@@ -706,117 +707,178 @@ mwj_readmin_counter(AdjHT* hTables,
 
 READMIN_COUNTER_TASK_LOOP:
   while (true) {
-#pragma HLS pipeline II = 1 style = flp
+#pragma HLS pipeline II = 2 style = flp
 
-    tuple_in = stream_tuple_in[stream_p].read();
-#if DEBUG_PRINTS
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read from stream[%d]\n", (int)stream_p);
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {v: %d}\n", (unsigned int)tuple_in.indexing_v);
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {tbl: %d}\n", (int)tuple_in.tb_index);
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {addr_cnt: %s}\n", tuple_in.addr_counter.to_string(10).c_str());
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {skip: %d}\n", (int)tuple_in.skip_counter);
-    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read tuple, {stop: %d}\n", (int)tuple_in.stop);
+    /* Read the START tuple for the current job */
+    readmin_counter_tuple_t start_tuple = stream_tuple_in.read();
+
+    //tuple_in = stream_tuple_in[stream_p].read();
+#if TRACE_MULTIWAY_JOIN
+    //hls::print("[READMIN_COUNTER_TASK_LOOP]: Read from stream[%d]\n", (int)stream_p);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read start tuple, {v: %d}\n", (unsigned int)start_tuple.indexing_v);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read start tuple, {tbl: %d}\n", (int)start_tuple.tb_index);
+    //hls::print("[READMIN_COUNTER_TASK_LOOP]: Read start tuple, {addr_cnt: %s}\n", start_tuple.addr_counter.to_string(10).c_str());
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read start tuple, {addr_cnt: %d}\n", start_tuple.addr_counter);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read start tuple, {skip: %d}\n", (int)start_tuple.skip_counter);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read start tuple, {stop: %d}\n", (int)start_tuple.stop);
 #endif
-    if (tuple_in.stop) {
+    if (start_tuple.stop) {
       break;
     }
 
-    unsigned int current_offset = 0;
-    if (!tuple_in.skip_counter) {
-      const int COUNTERS_PER_ROW_LOG = DDR_BIT - C_W; /* Calculate 32-bit counters fit in 512-bit memory word */
+    /* Process the START tuple */
+    unsigned int start_offset = 0;
+    if (!start_tuple.skip_counter) {
       ap_uint<COUNTERS_PER_ROW_LOG> addr_inrow;
       ap_uint<DDR_W> ram_row;
       unsigned long addr_row;
 
       /* Compute address of the 512-bit row storing the counter */
-      addr_row = hTables[tuple_in.tb_index].start_offset + (tuple_in.addr_counter >> COUNTERS_PER_ROW_LOG);
-#if DEBUG_PRINTS
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Accessing memory for offset count.\n", 0);
+      addr_row = hTables[start_tuple.tb_index].start_offset + (start_tuple.addr_counter >> COUNTERS_PER_ROW_LOG);
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Accessing memory for offset count.\n", int(0));
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Reading m_axi address (addr_row) = %d\n", (unsigned int)addr_row);
 #endif
       /* Read the data */
       ram_row = m_axi[addr_row];
-#if DEBUG_PRINTS
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Raw data read (ram_row) = %s\n", ram_row.to_string(16).c_str());
+#if TRACE_MULTIWAY_JOIN
+      //hls::print("[READMIN_COUNTER_TASK_LOOP]: Raw data read (ram_row) = %s\n", ram_row.to_string(16).c_str());
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Raw data read (ram_row) = %d\n", (unsigned int)ram_row);
 #endif
 
       /* Compute the slot index of the counter within the 512-bit word.
       addr_inrow is now an index from 0 to 15 (512 bits / 32 bits per counter) */
-      addr_inrow = tuple_in.addr_counter;
+      addr_inrow = start_tuple.addr_counter;
 
       /* Directly extract the 32-bit counter from the correct slot in the 512-bit word */
       const int COUNTER_WIDTH_BITS = (1UL << C_W);
-      current_offset = ram_row.range(COUNTER_WIDTH_BITS * (addr_inrow + 1) - 1, COUNTER_WIDTH_BITS * addr_inrow);
+      start_offset = ram_row.range(COUNTER_WIDTH_BITS * (addr_inrow + 1) - 1, COUNTER_WIDTH_BITS * addr_inrow);
 
       reqs_readmin_counter++;
 #if DEBUG_STATS
       debug::readmin_counter_reads++;
 #endif
-#if DEBUG_PRINTS
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset = %u\n", (unsigned int)current_offset);
+#if TRACE_MULTIWAY_JOIN
+      //hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset = %u\n", (unsigned int)start_offset);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset = %d\n", (unsigned int)start_offset);
       hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset from slot %d\n", (unsigned int)addr_inrow);
     } else {
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Skipping memory access as per input tuple.\n", 0);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Skipping memory access as per input tuple.\n", int(0));
 #endif
     }
 
-    tuple_out.indexing_v = tuple_in.indexing_v;
-    tuple_out.tb_index = tuple_in.tb_index;
-    tuple_out.iv_pos = tuple_in.iv_pos;
-    tuple_out.num_tb_indexed = tuple_in.num_tb_indexed;
-
-    if (stream_p == 0) {
-      /* Store the starting offset */
-      start_offset_storage = current_offset;
-#if DEBUG_PRINTS
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Storing start_offset_storage = %u. Waiting for end address from stream[1].\n", (unsigned int)start_offset_storage);
+    /* Read the END tuple for the current job */
+    readmin_counter_tuple_t end_tuple = stream_tuple_in.read();
+#if TRACE_MULTIWAY_JOIN
+    //hls::print("[READMIN_COUNTER_TASK_LOOP]: Read from stream[%d]\n", (int)stream_p);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read end tuple, {v: %d}\n", (unsigned int)end_tuple.indexing_v);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read end tuple, {tbl: %d}\n", (int)end_tuple.tb_index);
+    //hls::print("[READMIN_COUNTER_TASK_LOOP]: Read end tuple, {addr_cnt: %s}\n", end_tuple.addr_counter.to_string(10).c_str());
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read end tuple, {addr_cnt: %d}\n", end_tuple.addr_counter);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read end tuple, {skip: %d}\n", (int)end_tuple.skip_counter);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Read end tuple, {stop: %d}\n", (int)end_tuple.stop);
 #endif
+
+    /* Process the END tuple */
+    unsigned int end_offset = 0;
+    if (!end_tuple.skip_counter) {
+      ap_uint<COUNTERS_PER_ROW_LOG> addr_inrow_end;
+      ap_uint<DDR_W> ram_row_end;
+      unsigned long addr_row_end;
+
+      /* Compute address of the 512-bit row storing the counter */
+      addr_row_end = hTables[end_tuple.tb_index].start_offset + (end_tuple.addr_counter >> COUNTERS_PER_ROW_LOG);
+#if TRACE_MULTIWAY_JOIN
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Accessing memory for offset count.\n", int(0));
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Reading m_axi address (addr_row_end) = %d\n", (unsigned int)addr_row_end);
+#endif
+      /* Read the data */
+      ram_row_end = m_axi[addr_row_end];
+#if TRACE_MULTIWAY_JOIN
+      //hls::print("[READMIN_COUNTER_TASK_LOOP]: Raw data read (ram_row_end) = %s\n", ram_row_end.to_string(16).c_str());
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Raw data read (ram_row_end) = %d\n", (unsigned int)ram_row_end);
+#endif
+
+      /* Compute the slot index of the counter within the 512-bit word.
+      addr_inrow_end is now an index from 0 to 15 (512 bits / 32 bits per counter) */
+      addr_inrow_end = end_tuple.addr_counter;
+
+      /* Directly extract the 32-bit counter from the correct slot in the 512-bit word */
+      const int COUNTER_WIDTH_BITS = (1UL << C_W);
+      end_offset = ram_row_end.range(COUNTER_WIDTH_BITS * (addr_inrow_end + 1) - 1, COUNTER_WIDTH_BITS * addr_inrow_end);
+
+      reqs_readmin_counter++;
+#if DEBUG_STATS
+      debug::readmin_counter_reads++;
+#endif
+#if TRACE_MULTIWAY_JOIN
+      //hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset = %u\n", (unsigned int)end_offset);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset = %d\n", (unsigned int)end_offset);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Extracted offset from slot %d\n", (unsigned int)addr_inrow_end);
     } else {
-      unsigned int end_offset = current_offset;
-      unsigned int number_of_edges = end_offset - start_offset_storage;
-      tuple_out.number_of_edges = number_of_edges;
-      if (number_of_edges > 0) {
-          /* Calculate memory address of the first word containing edges for this set */
-          tuple_out.rowstart = hTables[tuple_in.tb_index].start_edges + (start_offset_storage >> EDGES_PER_ROW_LOG);
-#if DEBUG_PRINTS
-          hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %u\n", (unsigned int)tuple_out.rowstart);
-          hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", hTables[tuple_in.tb_index].start_edges);
-          hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u\n", start_offset_storage);
+      hls::print("[READMIN_COUNTER_TASK_LOOP]: Skipping memory access as per input tuple.\n", int(0));
 #endif
-          /* Calculate memory address of the last word containing edges */
-          unsigned int end_row = hTables[tuple_in.tb_index].start_edges + ((end_offset - 1) >> EDGES_PER_ROW_LOG);
-          /* number of words to read is difference + 1 */
-          tuple_out.cycles = (end_row - tuple_out.rowstart) + 1;
-          /* Calculate and pass the starting slot index */
-          tuple_out.start_slot = start_offset_storage & ((1 << EDGES_PER_ROW_LOG) - 1);
-      } else {
-          /* If there are no edges, set cycles to 0 to prevent any reads */
-          tuple_out.rowstart = 0;
-          tuple_out.cycles = 0;
-          tuple_out.start_slot = 0;
-      }
-#if DEBUG_PRINTS
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, start_offset=%u\n", start_offset_storage);
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, end_offset=%u\n", end_offset);
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, num_edges=%u\n", (unsigned int)tuple_out.number_of_edges);
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {v: %d}\n", (unsigned int)tuple_out.indexing_v);
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {tbl: %d}\n", (int)tuple_out.tb_index);
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {rowstart: %u}\n", (unsigned int)tuple_out.rowstart);
-      hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {cycles: %u}\n", (unsigned int)tuple_out.cycles);
-#endif
-      stream_tuple_out.write(tuple_out);
     }
-    stream_p = (stream_p + 1) % 2;
+
+    /* Perform final calculation */
+    readmin_edge_tuple_t tuple_out;
+    tuple_out.indexing_v = start_tuple.indexing_v;
+    tuple_out.tb_index = start_tuple.tb_index;
+    tuple_out.iv_pos = start_tuple.iv_pos;
+    tuple_out.num_tb_indexed = start_tuple.num_tb_indexed;
+
+    unsigned int number_of_edges = end_offset - start_offset;
+    tuple_out.number_of_edges = number_of_edges;
+
+    if (number_of_edges > 0) {
+        /* Calculate memory address of the first word containing edges for this set */
+        tuple_out.rowstart = hTables[start_tuple.tb_index].start_edges + (start_offset >> EDGES_PER_ROW_LOG);
+#if TRACE_MULTIWAY_JOIN
+        /*hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %u\n", (unsigned int)tuple_out.rowstart);
+        hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %u\n", hTables[start_tuple.tb_index].start_edges);
+        hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %u\n", start_offset);*/
+        hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row address = %d\n", (unsigned int)tuple_out.rowstart);
+        hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, table_start_edges: %d\n", hTables[start_tuple.tb_index].start_edges);
+        hls::print("[READMIN_COUNTER_TASK_LOOP]: Calculated edge list row, offset: %d\n", start_offset);
+#endif
+        /* Calculate memory address of the last word containing edges */
+        unsigned int end_row = hTables[start_tuple.tb_index].start_edges + ((end_offset - 1) >> EDGES_PER_ROW_LOG);
+        /* number of words to read is difference + 1 */
+        tuple_out.cycles = (end_row - tuple_out.rowstart) + 1;
+        /* Calculate and pass the starting slot index */
+        tuple_out.start_slot = start_offset & ((1 << EDGES_PER_ROW_LOG) - 1);
+    } else {
+        /* If there are no edges, set cycles to 0 to prevent any reads */
+        tuple_out.rowstart = 0;
+        tuple_out.cycles = 0;
+        tuple_out.start_slot = 0;
+    }
+#if TRACE_MULTIWAY_JOIN
+    /*hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, start_offset=%u\n", start_offset);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, end_offset=%u\n", end_offset);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, num_edges=%u\n", (unsigned int)tuple_out.number_of_edges);*/
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, start_offset=%d\n", start_offset);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, end_offset=%d\n", end_offset);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Final calculation, num_edges=%d\n", (unsigned int)tuple_out.number_of_edges);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {v: %d}\n", (unsigned int)tuple_out.indexing_v);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {tbl: %d}\n", (int)tuple_out.tb_index);
+    /*hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {rowstart: %u}\n", (unsigned int)tuple_out.rowstart);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {cycles: %u}\n", (unsigned int)tuple_out.cycles);*/
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {rowstart: %d}\n", (unsigned int)tuple_out.rowstart);
+    hls::print("[READMIN_COUNTER_TASK_LOOP]: Writing output tuple {cycles: %d}\n", (unsigned int)tuple_out.cycles);
+#endif
+    stream_tuple_out.write(tuple_out);
   }
 
   /* Propagate stop node */
-  tuple_out.stop = true;
-#if DEBUG_PRINTS
-    hls::print("[mwj_readmin_counter]: STOP received. Forwarding STOP signal.\n", 0);
+  readmin_edge_tuple_t stop_out;
+  stop_out.stop = true;
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_readmin_counter]: STOP received. Forwarding STOP signal.\n", int(0));
 #endif
-  stream_tuple_out.write(tuple_out);
-#if DEBUG_PRINTS
-    hls::print("[mwj_readmin_counter]: FINISHED.\n", 0);
+  stream_tuple_out.write(stop_out);
+#if TRACE_MULTIWAY_JOIN
+    hls::print("[mwj_readmin_counter]: FINISHED.\n", int(0));
 #endif
 }
 
