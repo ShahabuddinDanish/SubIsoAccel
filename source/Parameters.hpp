@@ -71,6 +71,7 @@
 #define DEBUG_INTERFACE     1
 #define SOFTWARE_PREPROC    0
 #define CACHE_ENABLE        1
+#define TRACE_MULTIWAY_JOIN 1
 
 #ifndef __SYNTHESIS__
 #define DEBUG_STATS         1
