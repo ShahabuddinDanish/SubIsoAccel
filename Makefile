@@ -24,11 +24,11 @@ RMDIR = rm -rf
 TARGET ?= sw_emu
 
 # Target Platform (Alveo U250)
-PLATFORM ?= xilinx_u250_gen3x16_xdma_4_1_202210_1
-#PLATFORM ?= xilinx_u55c_gen3x16_xdma_3_202210_1
+#PLATFORM ?= xilinx_u250_gen3x16_xdma_4_1_202210_1
+PLATFORM ?= xilinx_u55c_gen3x16_xdma_3_202210_1
 
 # Kernel Name
-KERNEL_NAME := subgraphIsomorphism
+KERNELS := preprocess_kernel scatter_kernel multiwayjoin_kernel
 
 ############################## Build Directories ##############################
 
@@ -41,12 +41,17 @@ PACKAGE_OUT = ./package.$(TARGET)
 # Project Specifics
 EXECUTABLE := ./subiso_test_host
 HOST_SRC := ./source/subiso-test.cpp
-KERNEL_SRC := ./source/subgraphIsomorphism.cpp
-KERNEL_XO := $(BUILD_DIR)/$(KERNEL_NAME).xo
+
+PREPROCESS_SRC := ./source/preprocess_kernel.cpp
+SCATTER_SRC    := ./source/scatter_kernel.cpp
+MULTIWAY_SRC   := ./source/multiwayjoin_kernel.cpp
+KERNEL_SRCS    := $(PREPROCESS_SRC) $(SCATTER_SRC) $(MULTIWAY_SRC)
+
+KERNEL_XOS := $(patsubst %,$(BUILD_DIR)/%.xo,$(KERNELS))
 
 # Kernel Linking Output
-LINK_OUTPUT := $(BUILD_DIR)/$(KERNEL_NAME).link.xclbin
-XCLBIN_FILE := $(BUILD_DIR)/$(KERNEL_NAME).xclbin
+LINK_OUTPUT := $(BUILD_DIR)/kernels.link.xclbin
+XCLBIN_FILE := $(BUILD_DIR)/subgraphIsomorphism.xclbin
 
 # Kernel HLS & Link Configuration File
 KERNEL_CFG := ./subiso.cfg
@@ -69,7 +74,7 @@ VPP_FLAGS += --config $(KERNEL_CFG)
 VPP_FLAGS += -DDEBUG_INTERFACE=1
 
 # Set HLS synthesis target frequency
-VPP_FLAGS += --hls.clock 300000000:$(KERNEL_NAME)
+VPP_FLAGS += $(foreach KERNEL,$(KERNELS),--hls.clock 300000000:$(KERNEL))
 
 # Kernel Linker Flags (V++)
 VPP_LDFLAGS += -g
@@ -108,8 +113,6 @@ all: check-platform check-device check-vitis $(EXECUTABLE) $(XCLBIN_FILE) emconf
 
 host: $(EXECUTABLE)
 
-kernel_compile: $(KERNEL_XO)
-
 # Build xclbin (depends on the kernel .xo existing)
 build: check-vitis check-device $(XCLBIN_FILE)
 
@@ -118,16 +121,16 @@ xclbin: build
 # Kernel Build Rules
 
 # 1. Compile Kernel (.cpp -> .xo)
-$(KERNEL_XO): $(KERNEL_SRC) | check-vitis
+$(BUILD_DIR)/%.xo: ./source/%.cpp | check-vitis
 	$(ECHO) "Compiling kernel source $< to XO file $@..."
 	mkdir -p $(BUILD_DIR)
-	$(VPP) $(VPP_FLAGS) --compile -k $(KERNEL_NAME) -o $@ $<
+	$(VPP) $(VPP_FLAGS) --compile -k $* -o $@ $<
 
 # 2. Link Kernel (.xo -> .xclbin)
-$(XCLBIN_FILE): $(KERNEL_XO) | check-vitis
-	$(ECHO) "Linking kernel object $< to create XCLBIN file..."
+$(XCLBIN_FILE): $(KERNEL_XOS) | check-vitis
+	$(ECHO) "Linking kernel objects to create XCLBIN file..."
 	mkdir -p $(BUILD_DIR)
-	$(VPP) --link $(VPP_FLAGS) $(VPP_LDFLAGS) --kernel $(KERNEL_NAME) -o'$(LINK_OUTPUT)' $<
+	$(VPP) --link $(VPP_FLAGS) $(VPP_LDFLAGS) $(foreach KERNEL,$(KERNELS),--kernel $(KERNEL)) -o'$(LINK_OUTPUT)' $(KERNEL_XOS)
 	$(ECHO) "Packaging $(XCLBIN_FILE)..."
 	$(VPP) --package $(VPP_FLAGS) $(LINK_OUTPUT) --package.out_dir $(PACKAGE_OUT) -o $@
 
